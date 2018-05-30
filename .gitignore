@@ -1,0 +1,34 @@
+# temporary files
+*.tmp
+*.pyc
+*.sav
+*.swp
+*.bak
+
+# (large) data files or archives
+*.result
+*.dump
+*.p
+*.pkl
+*.pickle
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
+# (large) media files
+*.avi
+*.mp4
+*.mp3
+*.png
+*.jpg
+*.jpeg
+
+# temporary test files
+*test*.py
+*test*.ipynb
+# but include test folder
+#*/test/
+
+# jupyter notebook checkpoint
+.ipynb_checkpoints
