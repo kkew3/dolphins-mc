@@ -1,3 +1,8 @@
+.pytorch.rt/
+.data/
+.assets/
+.envrc
+
 # temporary files
 *.tmp
 *.pyc
@@ -11,6 +16,7 @@
 *.p
 *.pkl
 *.pickle
+*.pth
 *.tar
 *.tar.gz
 *.tgz
