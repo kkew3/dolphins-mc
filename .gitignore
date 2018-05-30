@@ -1,4 +1,4 @@
-.pytorch.rt/
+pytorch.rt/
 .data/
 .assets/
 .envrc
