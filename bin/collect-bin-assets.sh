@@ -66,8 +66,12 @@ fi
 # get the latest tarball modification datetime (Unix ticks);
 # if there's no tarball, `tarball_mod` is 0
 tarballs=$(find $local_asset_dir -type f -name '*.tar.gz')
-tarball_mod=$(echo "$tarballs" | tr ' ' '\n' | sed '/^$/d'\
-	| xargs stat -c'%Y' | sed '$a0' | sort -nr | head -1)
+if ls $local_asset_dir/*.tar.gz > /dev/null 2>&1; then
+	tarball_mod=$(echo "$tarballs" | tr ' ' '\n' | sed '/^$/d'\
+		| xargs stat -c'%Y' | sed '$a0' | sort -nr | head -1)
+else
+	tarball_mod=0
+fi
 
 if [ "$bin_assets_mod" -gt "$tarball_mod" ]; then
 	# time is not in format "%H:%M:%S" because tar will recognize file
