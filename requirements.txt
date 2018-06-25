@@ -8,3 +8,6 @@ pylint
 numpy
 scipy
 ipdb
+opencv-python
+hickle
+matplotlib

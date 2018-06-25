@@ -1,7 +1,9 @@
 pytorch.rt/
+res/
 .data/
 .assets/
 .envrc
+.vscode/
 
 # temporary files
 *.tmp
@@ -15,7 +17,9 @@ pytorch.rt/
 *.dump
 *.p
 *.pkl
+*.hkl
 *.pickle
+*.hickle
 *.pth
 *.tar
 *.tar.gz
