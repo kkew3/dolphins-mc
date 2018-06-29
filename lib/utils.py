@@ -1,11 +1,66 @@
 from contextlib import contextmanager
 import multiprocessing
 import numpy as np
+import cv2
+
+@contextmanager
+def capcontext(video_file):
+    """
+    Context manager that handles the release of video capture object.
+    """
+    cap = cv2.VideoCapture(video_file)
+    yield cap
+    cap.release()
+
 
 class FrameIterator(object):
     """
     Yield frames in numpy array of dimension [W x H x 3] where '3' stands
     for RGB, 'W' the width and 'H' the height.
+
+    >>> import os
+    >>> import cv2
+    >>> import numpy as np
+    >>> video = os.path.join(os.path.dirname(__file__),
+    ...                      '..', 'test-res', 'video-clip.avi')
+    >>> with capcontext(video) as cap:
+    ...     vit = FrameIterator(cap, max_len=2)
+    ...     frame12 = list(vit)
+    >>> with capcontext(video) as cap:
+    ...     vit = FrameIterator(cap, max_len=1)
+    ...     frame1 = list(vit)
+    ...     vit.reset_counter()
+    ...     frame2 = list(vit)
+    >>> np.array_equal(frame12[0], frame12[1])
+    False
+    >>> np.array_equal(frame1[0], frame2[0])
+    False
+    >>> np.array_equal(frame1[0], frame12[0])
+    True
+    >>> np.array_equal(frame2[0], frame12[1])
+    True
+    >>> with capcontext(video) as cap:
+    ...     vit = FrameIterator(cap, max_len=4)
+    ...     frames1 = list(vit)
+    ...     vit.reset_counter()
+    ...     frames2 = list(vit)
+    ...     vit.reset_counter()
+    ...     frames3 = list(vit)
+    >>> len(frames1)
+    4
+    >>> len(frames2)
+    1
+    >>> len(frames3)
+    0
+    >>> with capcontext(video) as cap:
+    ...     vit = FrameIterator(cap, max_len=6)
+    ...     frames1 = list(vit)
+    ...     vit.reset_counter()
+    ...     frames2 = list(vit)
+    >>> len(frames1)
+    5
+    >>> len(frames2)
+    0
     """
 
     def __init__(self, cap, max_len=None):
@@ -27,10 +82,12 @@ class FrameIterator(object):
         self._read_count = 0
 
     def next(self):
-        s, f = self.cap.read()
-        if s and self._read_count < self.max_len:
-            self._read_count += 1
-            return f[:,:,::-1]
+        if self._read_count < self.max_len:
+            s, f = self.cap.read()
+            if s:
+                self._read_count += 1
+                # BGR -> RGB
+                return f[:,:,::-1]
         raise StopIteration()
 
     def __iter__(self):
