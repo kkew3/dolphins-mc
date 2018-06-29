@@ -1,9 +1,11 @@
 pytorch.rt/
 res/
+test-res/
 .data/
 .assets/
 .envrc
 .vscode/
+.idea/
 
 # temporary files
 *.tmp
