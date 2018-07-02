@@ -44,3 +44,7 @@ test-res/
 
 # jupyter notebook checkpoint
 .ipynb_checkpoints
+
+# temporary local script
+_*.sh
+_*.py
