@@ -1,0 +1,30 @@
+#!/bin/bash
+if [ -z $EMAIL ]; then
+	echo EMAIL environment variable required to send email >> /dev/stderr
+	exit 2
+fi
+if [ "$2" = "" ]; then
+	echo Usage: remind NAME \"\<command\>\"
+	exit 1
+fi
+
+echo -n 'Password: '
+read -s p
+echo
+
+from_date="$(date)"
+eval "${@:2}"
+retcode=$?
+
+subj="dolphins-mc-su18 experiment \`$1' returns $retcode"
+cat << EOF | pyemail -S smtp.gmail.com \
+	-p $p \
+	-f $EMAIL \
+	-t $EMAIL \
+	-s "$subj" \
+	-m -
+
+Job started at $from_date
+On host: $HOSTNAME
+EOF
+unset p
