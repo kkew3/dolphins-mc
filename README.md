@@ -4,4 +4,4 @@ This repository holds ongoing work of multi-camera (overlapping view) dolphin tr
 
 # Acknowledgement
 
-- `src/prednet` was cloned from "https://github.com/coxlab/prednet".
+- `src/prednet_keras2` was cloned from "https://github.com/coxlab/prednet".
