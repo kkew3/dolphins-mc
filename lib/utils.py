@@ -3,6 +3,7 @@ import multiprocessing
 import numpy as np
 import cv2
 
+
 @contextmanager
 def capcontext(video_file):
     """
@@ -17,50 +18,6 @@ class FrameIterator(object):
     """
     Yield frames in numpy array of dimension [W x H x 3] where '3' stands
     for RGB, 'W' the width and 'H' the height.
-
-    >>> import os
-    >>> import cv2
-    >>> import numpy as np
-    >>> video = os.path.join(os.path.dirname(__file__),
-    ...                      '..', 'test-res', 'video-clip.avi')
-    >>> with capcontext(video) as cap:
-    ...     vit = FrameIterator(cap, max_len=2)
-    ...     frame12 = list(vit)
-    >>> with capcontext(video) as cap:
-    ...     vit = FrameIterator(cap, max_len=1)
-    ...     frame1 = list(vit)
-    ...     vit.reset_counter()
-    ...     frame2 = list(vit)
-    >>> np.array_equal(frame12[0], frame12[1])
-    False
-    >>> np.array_equal(frame1[0], frame2[0])
-    False
-    >>> np.array_equal(frame1[0], frame12[0])
-    True
-    >>> np.array_equal(frame2[0], frame12[1])
-    True
-    >>> with capcontext(video) as cap:
-    ...     vit = FrameIterator(cap, max_len=4)
-    ...     frames1 = list(vit)
-    ...     vit.reset_counter()
-    ...     frames2 = list(vit)
-    ...     vit.reset_counter()
-    ...     frames3 = list(vit)
-    >>> len(frames1)
-    4
-    >>> len(frames2)
-    1
-    >>> len(frames3)
-    0
-    >>> with capcontext(video) as cap:
-    ...     vit = FrameIterator(cap, max_len=6)
-    ...     frames1 = list(vit)
-    ...     vit.reset_counter()
-    ...     frames2 = list(vit)
-    >>> len(frames1)
-    5
-    >>> len(frames2)
-    0
     """
 
     def __init__(self, cap, max_len=None):
@@ -107,6 +64,7 @@ def poolcontext(*args, **kwargs):
     yield pool
     pool.terminate()
 
+
 def aligned_enum(max_count):
     """
     Make string alignment to the index returned by `numerate` built-in.
@@ -126,6 +84,7 @@ def aligned_enum(max_count):
     :return: function that align the index of each tuple yielded by `enumerate`
     """
     width = int(np.ceil(np.log10(max_count)))
+
     def _aligned_enum(t):
-        return (str(t[0]).rjust(width, '0'), t[1])
+        return str(t[0]).rjust(width, '0'), t[1]
     return _aligned_enum
