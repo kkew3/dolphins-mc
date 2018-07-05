@@ -39,7 +39,7 @@ import hickle
 import utils
 
 
-BATCHFILE_PAT = re.compile(r'^B\d+\.hkl$')
+BLOCKFILE_PAT = re.compile(r'^B\d+\.hkl$')
 HASH_ALGORITHM = 'sha1'
 
 def edir(string):
@@ -129,7 +129,8 @@ def save_frames(video_file, dataset_root, block_size, max_blocks, dot_progress):
     metafilename = os.path.join(batches_dir, video_name + '.json')
     with open(metafilename, 'w') as outfile:
         json.dump(dict(total_frames=n_frames,
-                       dim_description=['B', 'C', 'W', 'H']), outfile)
+                       dim_description=['B', 'C', 'W', 'H'],
+                       block_size=block_size), outfile)
 
 def verify_frames(video_file, dataset_root):
     """
@@ -143,7 +144,7 @@ def verify_frames(video_file, dataset_root):
     batches_dir = os.path.join(dataset_root, video_name)
     failed_filenames = list()
     data_batches = map(lambda name: os.path.join(batches_dir, name),
-                       filter(BATCHFILE_PAT.match, os.listdir(batches_dir)))
+                       filter(BLOCKFILE_PAT.match, os.listdir(batches_dir)))
     for filename in data_batches:
         try:
             with open(filename) as infile:
@@ -165,7 +166,7 @@ def compute_checksum(video_file, dataset_root):
     batches_dir = os.path.join(dataset_root, video_name)
     hash_results = OrderedDict()
     data_batches = map(lambda name: os.path.join(batches_dir, name),
-                       filter(BATCHFILE_PAT.match, os.listdir(batches_dir)))
+                       filter(BLOCKFILE_PAT.match, os.listdir(batches_dir)))
     for filename in data_batches:
         hashbuf = hashlib.new(HASH_ALGORITHM)
         with open(filename, 'rb') as infile:
