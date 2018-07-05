@@ -1,3 +1,5 @@
+import os
+import sys
 from contextlib import contextmanager
 import multiprocessing
 import numpy as np
@@ -61,8 +63,10 @@ def poolcontext(*args, **kwargs):
     ...     pass
     """
     pool = multiprocessing.Pool(*args, **kwargs)
-    yield pool
-    pool.terminate()
+    try:
+        yield pool
+    finally:
+        pool.terminate()
 
 
 def aligned_enum(max_count):
@@ -88,3 +92,13 @@ def aligned_enum(max_count):
     def _aligned_enum(t):
         return str(t[0]).rjust(width, '0'), t[1]
     return _aligned_enum
+
+
+@contextmanager
+def suppress_stdout():
+    with open(os.devnull, 'w') as devnull:
+        old_stdout, sys.stdout = sys.stdout, devnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
