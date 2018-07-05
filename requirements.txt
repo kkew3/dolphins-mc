@@ -12,6 +12,7 @@ opencv-python
 hickle
 unittest2
 matplotlib
+cachetools
 line_profiler
 
 # for compatible with the original PredNet (Keras) project
