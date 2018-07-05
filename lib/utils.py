@@ -25,6 +25,7 @@ class FrameIterator(object):
     def __init__(self, cap, max_len=None):
         """
         :param cap: the video capture object
+        :type cap: cv2.VideoCapture
         :param max_len: the maximum number of frames to read before stopped
         """
         if not cap.isOpened():
@@ -85,6 +86,7 @@ def aligned_enum(max_count):
     True
 
     :param max_count: alignment width
+    :type max_count: int
     :return: function that align the index of each tuple yielded by `enumerate`
     """
     width = int(np.ceil(np.log10(max_count)))
