@@ -115,8 +115,8 @@ def save_frames(video_file, dataset_root, block_size, max_blocks, dot_progress):
             # [N x H x W x 3], where N <= BATCH_SIZE
             frames = np.stack(frames)
             # frames of dimension:
-            # [N x 3 x W x H], where N <= BATCH_SIZE
-            frames = np.transpose(frames, (0, 3, 2, 1))
+            # [N x 3 x H x W], where N <= BATCH_SIZE
+            frames = np.transpose(frames, (0, 3, 1, 2))
             tofile = os.path.join(batches_dir, dest_tmpl.format(block_id))
             with open(tofile, 'w') as outfile:
                 hickle.dump(frames, outfile, compression='gzip')
