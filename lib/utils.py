@@ -18,8 +18,8 @@ def capcontext(video_file):
 
 class FrameIterator(object):
     """
-    Yield frames in numpy array of dimension [W x H x 3] where '3' stands
-    for RGB, 'W' the width and 'H' the height.
+    Yield frames in numpy array of dimension [H x W x 3] where '3' stands
+    for RGB, 'H' the height and 'W' the width.
     """
 
     def __init__(self, cap, max_len=None):
