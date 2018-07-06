@@ -129,7 +129,7 @@ def save_frames(video_file, dataset_root, block_size, max_blocks, dot_progress):
     metafilename = os.path.join(batches_dir, video_name + '.json')
     with open(metafilename, 'w') as outfile:
         json.dump(dict(total_frames=n_frames,
-                       dim_description=['B', 'C', 'W', 'H'],
+                       dim_description=['B', 'C', 'H', 'W'],
                        block_size=block_size), outfile)
 
 def verify_frames(video_file, dataset_root):
