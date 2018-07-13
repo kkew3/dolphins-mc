@@ -29,8 +29,10 @@ class VideoDataset(Dataset):
     def __init__(self, root, max_block_cached=2, transform=None):
         """
         :param root: the dataset root directory
+        :type root: str
         :param max_block_cached: maximum number of blocks to be cached in
                memory; must be at least 1
+        :type max_block_cached: int
         :param transform: the transforms to perform after loading the frames
         """
         max_block_cached = int(max_block_cached)
