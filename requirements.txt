@@ -4,16 +4,21 @@ tqdm
 scikit-learn
 jupyter
 pylatex
-pylint
 numpy
 scipy
-ipdb
 opencv-python
 hickle
-unittest2
 matplotlib
 cachetools
+
+# IDE support
+pylint
+typing
+
+# for debugging
 line_profiler
+unittest2
+ipdb
 
 # for compatible with the original PredNet (Keras) project
 theano==0.9.0
