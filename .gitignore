@@ -48,3 +48,6 @@ test-res/
 # temporary local script
 _*.sh
 _*.py
+
+# cloned repo (as reference)
+src/prednet_ref1_pytorch/
