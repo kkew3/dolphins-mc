@@ -4,12 +4,13 @@ tqdm
 scikit-learn
 jupyter
 pylatex
-numpy
+numpy==1.14.5
 scipy
 opencv-python
 hickle
 matplotlib
 cachetools
+ddlogger
 
 # IDE support
 pylint
