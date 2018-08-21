@@ -37,6 +37,7 @@ import numpy as np
 import hickle
 
 import utils
+import ddlogger
 
 
 BLOCKFILE_PAT = re.compile(r'^B\d+\.hkl$')
@@ -105,6 +106,8 @@ def save_frames(video_file, dataset_root, block_size, max_blocks, dot_progress):
             os.mkdir(batches_dir)
         dest_tmpl = 'B{}.hkl'
         cit = range(max_blocks) if max_blocks else itertools.count()
+        if dot_progress:
+            dl = ddlogger.DotDotLogger()
         for block_id in cit:
             frames = list(vit)
             if not len(frames):
@@ -122,8 +125,7 @@ def save_frames(video_file, dataset_root, block_size, max_blocks, dot_progress):
                 hickle.dump(frames, outfile, compression='gzip')
             vit.reset_counter()
             if dot_progress:
-                sys.stdout.write('.')
-                sys.stdout.flush()
+                dl.update()
         if dot_progress:
             print
     metafilename = os.path.join(batches_dir, video_name + '.json')
