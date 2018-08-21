@@ -34,15 +34,15 @@ class ConvLSTMCell(nn.Module):
         :param in_channels:
         :param out_channels:
         :param kernel_size:
-        :param stride: controls the stride ofor the cross-correlation, a single
+        :param stride: controls the stride for the cross-correlation, a single
                number of a tuple
         :param padding: controls the amount of implicit zero-paddings on both
                sides for padding number of points for each dimension
         :param dilation: controls the spacing between the kernel points; also
                known as the atrous algorithm
         :param groups: controls the connections between inputs and outputs;
-               `in_channels` and `out_channels` must both be divisible by
-               `groups`
+               ``in_channels`` and ``out_channels`` must both be divisible by
+               ``groups``
         :param bias: True to enable bias parameters
         """
         nn.Module.__init__(self)
@@ -94,9 +94,10 @@ class ConvLSTMCell(nn.Module):
 
     def forward(self, inputs, hidden):
         """
-        :param inputs: should be of size [B x Cx x H x W]
+        :param inputs: should be of size
+               :math:`[B \\times C_x \\times H \\times W]`
         :param hidden: tuple of hidden state and cell state, each should be of
-               size [B x Ch x H x W]
+               size :math:`[B \\times C_h \\times H \\times W]`
         :return: the hidden state (next time step), and the tuple of the hidden
                  state (next time step) and the cell state (next time step)
         """
@@ -132,7 +133,7 @@ class ConvLSTMCell(nn.Module):
 class SatLU(nn.Module):
     """
     The saturating linear unit, with upper limit.
-    Equation: $y = min(x, upper)$.
+    Equation: :math:`y = \\min\\{x, upper\\}`.
     """
     def __init__(self, upper):
         nn.Module.__init__(self)
@@ -147,49 +148,95 @@ class SatLU(nn.Module):
         return tmpl.format(type(self).__name__, self.upper)
 
 
-class PredNetForwardConv(nn.Module):
+class PredNetForwardError(nn.Module):
     """
-    The $A_l$ block in PredNet. For convenience, this module serves as an
-    identity mapping if `with_error` is set to False; otherwise, the input
-    to `forward` method is regarded as the prediction error signal and will
-    go through `conv`, `nn.MaxPool2d(2)` and `nn.ReLU()`.
+    Module in *PredNet* that collects the prediction and target representation,
+    and emits the error signal.
     """
 
-    def __init__(self, conv=None, with_error=True):
+    def __init__(self, target_as_input=False):
         """
-        :param conv: the convolutional module, can be either a sequence of
-               `nn.Conv2d` instances or a single `nn.Conv2d`; the last two
-               dimensions of the input/output tensor, namely the height and the
-               width, should not be changed by `conv`.
-        :param with_error: True if the returned target is based on the error
-               signal
-
-        `conv` will be ignored if `with_error` is False; `conv` must not be None
-        if `with_error` is True.
+        :param target_as_input: ``True`` if the target representation is the
+               exact image in the input space. When this is the case, a
+               ``SatLU`` of upper bound 1.0 will be applied to the prediction
+               representation at the beginning of the ``forward`` method. The
+               upper bound 1.0 is chosen since *PyTorch* normalizes pixel values
+               to within range :math:`[0, 1]`
         """
         nn.Module.__init__(self)
+        self.target_as_input = target_as_input
+        if self.target_as_input:
+            self.satlu = SatLU(upper=1.0)  # preprocessing of the *input* prediction
+        self.relu = nn.ReLU()  # the activation function in error module
 
-        if with_error:
-            if conv is None:
-                raise ValueError('`conv` must not be None if `with_error`')
-            # if `conv` is nn.Sequential or similar object, verify that all its
-            # children modules are of type `nn.Conv2d`
-            for child in conv.children():
-                if not isinstance(child, nn.Conv2d):
-                    raise ValueError('child of `conv` must be of type '
-                                     '`torch.nn.Conv2d`')
+    def forward(self, predictions, targets):
+        """
+        :param predictions: the predicted representations. Variable of dimension
+               :math:`[B \\times C_l \\times H_l \\times W_l]`, where
+               :math:`C_l`, :math:`H_l` and :math:`W_l` are the number of
+               channels, height and width of the :math:`l`-th representation
+        :param targets: the target representations, Variable of dimension
+               :math:`[B \\times C_l \\times H_l \\times W_l]`, where
+               :math:`C_l`, :math:`H_l` and :math:`W_l` are the number of
+               channels, height and width of the :math:`l`-th representation
+        :return: the error signal, of dimension
+                 :math:`[B \\times 2C_l \\times H_l \\times W_l]`
+        """
+        # sanity check (for debugging)
+        assert predictions.size() == targets.size(), 'predictions/targets size ' \
+                                                     'mismatch: {}/{}'.format(
+                predictions.size(), targets.size())
 
-        self.with_error = with_error
-        if with_error:
-            self.conv = conv
-            self._postproc = nn.Sequential(nn.MaxPool2d(2), nn.ReLU())
+        if self.target_as_input:
+            predictions = self.satlu(predictions)  # type: Variable
+        pos_err = self.relu(predictions - targets)
+        neg_err = self.relu(targets - predictions)
+        err = torch.cat((pos_err, neg_err), dim=1)  # concatenate on channels
+        return err
+
+
+class PredNetForwardTarget(nn.Module):
+    """
+    Module in *PredNet* that collects the error signal and emits the target
+    representation for the next layer. This module is an aggregation of
+    ``nn.Conv2d(...)``, ``nn.ReLU()`` and ``nn.MaxPool2d(2)``.
+    """
+
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 stride=1, padding=1, dilation=1, groups=1, bias=True):
+        """
+        :param in_channels:
+        :param out_channels:
+        :param kernel_size:
+        :param stride: controls the stride for the cross-correlation, a single
+               number of a tuple
+        :param padding: controls the amount of implicit zero-paddings on both
+               sides for padding number of points for each dimension
+        :param dilation: controls the spacing between the kernel points; also
+               known as the atrous algorithm
+        :param groups: controls the connections between inputs and outputs;
+               ``in_channels`` and ``out_channels`` must both be divisible by
+               ``groups``
+        :param bias: True to enable bias parameters
+        """
+        nn.Module.__init__(self)
+        self.features = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size,
+                          stride=stride, padding=padding, dilation=dilation,
+                          groups=groups, bias=bias),
+                nn.ReLU(),
+                nn.MaxPool2d(2),
+        )
 
     def forward(self, x):
-        if self.with_error:
-            y = self.conv(x)
-            assert x.size()[-2:] == y.size()[-2:], \
-                '`conv` changes the last two dimension at output tensor, from ' \
-                '{} to {}; check the padding of `conv`'.format(x.size()[-2:],
-                                                               y.size()[-2:])
-            return self._postproc(y)
-        return x
+        return self.features(x)
+
+
+class PredNetPrediction(nn.Module):
+    """
+    Module in *PredNet* that accepts the output of the representation unit and
+    emits the prediction of the target representation.
+    """
+    def __init__(self):
+        nn.Module.__init__(self)
+        pass
