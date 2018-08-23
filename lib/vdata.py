@@ -1,6 +1,7 @@
 """
-Defines the class representing the video dataset
+Defines representing the video dataset class and related functions.
 """
+
 import json
 import multiprocessing
 import os
@@ -12,6 +13,7 @@ from cachetools import LRUCache
 import hickle
 import numpy as np
 from torch.utils.data import Dataset
+import torchvision.transforms as trans
 from PIL import Image
 
 import utils
@@ -20,6 +22,32 @@ import utils
 DATASET_NOT_FOUND = 0x01
 DATASET_CORRUPTED = 0x02
 
+# str.format template
+# example: DEFAULT_DATASET_ROOTNAME_TMPL.format(8, (8, 0, 0))
+DEFAULT_DATASET_ROOTNAME_TMPL = 'CH{0:0>2}-{1[0]:0>2}_{1[1]:0>2}_{1[2]:0>2}'
+
+NORMALIZATION_INFO_FILE = 'nml-stat.npz'
+
+def get_normalization_stats(root):
+    """
+    Returns the normalization statistics (mean, std) in preprocessing step
+    when loading the dataset. The normalization data presents in a ``npz``
+    file ``$NORMALIZATION_INFO_FILE`` under the dataset root directory.
+
+    :param root: the root directory of the video dataset
+    :raise IOError: if the ``$NORMALIZATION_INFO_FILE`` is not found under
+           ``root``, which may due to spelling error in ``root`` or the file
+           is absent as a matter of fact. For the latter case, compute the
+           normalization statistics (using
+           ``$PROJECT_HOME/bin/compute-perch-stat.py``), put the result file
+           to the root directory, before calling this function.
+    :return: the mean and std
+    :rtype: Tuple[Tuple[float], Tuple[float]]
+    """
+    data = np.load(os.path.join(root, NORMALIZATION_INFO_FILE))
+    mean = tuple(map(float, data['mean']))
+    std = tuple(map(float, data['std']))
+    return mean, std
 
 def check_file_integrity(checksum_line):
     """
@@ -174,3 +202,53 @@ class PairedVideoDataset(Dataset):
 
     def __getitem__(self, item):
         return tuple(ds[item] for ds in self.dataset_pair)
+
+
+def prepare_video_dataset(channel, index, rootdir=None, normalized=False,
+                          additional_transforms=None):
+    """
+    Load video dataset from ``root``. This is a convenient function if the
+    root directory of the target dataset is named after
+    ``$DEFAULT_DATASET_ROOTNAME_TMPL``.
+
+    :param channel: the channel, i.e. the two-digit number after "CH"; accept
+           int or str. If int, it should be nonnegative and less than 100; if
+           str, it should be convertible to int and with length 2. No argument
+           type check will be made.
+    :type channel: Union[int, str]
+    :param index: the index string, may be a string of format
+           ``$DEFAULT_DATASET_ROOTNAME_TMPL``,
+           or a 3-tuple of string of format ``%2d``, or a 3-tuple of ints. The
+           value requirement for the latter two cases is the same as in option
+           ``channel``. No argument type check will be made.
+    :type index: Union[str, Tuple[int, int, int], Tuple[str, str, str]]
+    :param rootdir: the parent directory of the root directory, default to
+           ``os.environ['PYTORCH_DATA_HOME']``
+    :type rootdir: Optional[str]
+    :param normalized: True to find ``$NORMALIZATION_INFO_FILE`` file under the
+           dataset root directory, load normalization statistics from it, and
+           normalize the loaded data after converted to tensor; default to
+           False
+    :param additional_transforms: additional transforms other than ToTensor
+           (and Normalize if ``normalized``); should be a list of
+           transformations
+    :type additional_transforms: Sequence
+    :return: the video dataset instance
+    :rtype: VideoDataset
+    """
+    if isinstance(index, str):
+        index = tuple(index.split('_'))
+    rootname = DEFAULT_DATASET_ROOTNAME_TMPL.format(channel, index)
+    if rootdir is None:
+        rootdir = os.environ['PYTORCH_DATA_HOME']
+    root = os.path.join(rootdir, rootname)
+    transforms = [trans.ToTensor()]
+    if normalized:
+        mean, std = get_normalization_stats(root)
+        mean = tuple(map(float, mean))
+        std = tuple(map(float, std))
+        transforms.append(trans.Normalize(mean=mean, std=std))
+    if len(additional_transforms):
+        transforms.extend(additional_transforms)
+    dset = VideoDataset(root, transform=trans.Compose(transforms))
+    return dset
