@@ -1,9 +1,15 @@
+"""
+Global library for other dedicated library or project/branch-specific codes.
+"""
+
 import os
 import sys
 from contextlib import contextmanager
 import multiprocessing
+
 import numpy as np
 import cv2
+import torchvision.transforms as trans
 
 
 @contextmanager
@@ -104,3 +110,26 @@ def suppress_stdout():
             yield
         finally:
             sys.stdout = old_stdout
+
+
+def clear_frametensor_channel(tensor, c=None):
+    """
+    Make a specific channel of a frame tensor to all-zero. This function is
+    expected to be used as a Lambda transformation within
+    ``torchvision.transforms.Compose``.
+
+    :param tensor: the frame tensor of dimension [C x H x W] where C is the
+           number of channels, H the height and W the width
+    :param c: a list of channels to clear, default to []
+    :type c: Sequence[int]
+    :return: the original tensor if nothing changed, or a copy of the processed
+             tensor
+    """
+    if not c:
+        return tensor
+
+    tensor = tensor.clone()
+    for cid in c:
+        tensor[cid].zero_()
+    return tensor
+
