@@ -1,5 +1,7 @@
 """
 Defines representing the video dataset class and related functions.
+
+@deprecated Please use ``vhdata`` instead.
 """
 
 import json
@@ -7,6 +9,7 @@ import multiprocessing
 import os
 import re
 import hashlib
+from collections import deque
 
 from cachetools import LRUCache
 # noinspection PyPackageRequirements
@@ -21,6 +24,8 @@ import utils
 
 DATASET_NOT_FOUND = 0x01
 DATASET_CORRUPTED = 0x02
+
+DATASET_HASH_ALGORITHM = 'sha1'
 
 # str.format template
 # example: DEFAULT_DATASET_ROOTNAME_TMPL.format(8, (8, 0, 0))
@@ -49,9 +54,25 @@ def get_normalization_stats(root):
     std = tuple(map(float, data['std']))
     return mean, std
 
+def compute_file_integrity(filename):
+    """
+    Compute integrity ($DATASET_HASH_ALGORITHM) of a single file.
+
+    :param filename: the filename
+    :return: the checksum line, which is a tuple of form
+             ``(base_filename, expected_hex)``
+    """
+    hashbuff = hashlib.new(HASH_ALGORITHM)
+    with open(filename, 'rb') as infile:
+        for block in iter(lambda: infile.read(1024 * 1024), b''):
+            hashbuff.update(block)
+    expected_hex = hashbuff.hexdigest()
+    return os.path.basename(filename), expected_hex
+
 def check_file_integrity(checksum_line):
     """
-    Check integrity (SHA-1) of a single file.
+    Check integrity ($DATASET_HASH_ALGORITHM) of a single file.
+
     :param checksum_line: a tuple of form ``(filename, expected_hex)``,
            where ``filename`` is the absolute path of the file to check, and
            ``expected_hex`` is the hex string of the expected SHA-1 hash
@@ -60,7 +81,7 @@ def check_file_integrity(checksum_line):
              as ``DATASET_NOT_FOUND`` and ``DATASET_CORRUPTED``) otherwise
     :rtype: int
     """
-    hashbuff = hashlib.sha1()
+    hashbuff = hashlib.new(DATASET_HASH_ALGORITHM)
     filename, expected_hex = checksum_line
     try:
         with open(filename, 'rb') as infile:
@@ -79,8 +100,8 @@ class VideoDataset(Dataset):
     corresponding frame tensor when requesting the frame ID (indexed from zero).
     The dataset is not supervised.
     """
-    BLOCKFILE_TMPL = 'B{}.hkl'  # usage: BLOCKFILE_TMPL.format(block_id)
-    BLOCKFILE_PAT = re.compile(r'^B(\d+)\.hkl$')
+    BLOCKFILE_TMPL = 'B{}.h5'  # usage: BLOCKFILE_TMPL.format(block_id)
+    BLOCKFILE_PAT = re.compile(r'^B(\d+)\.h5$')
 
     def __init__(self, root, max_block_cached=2, transform=None):
         """
@@ -129,7 +150,7 @@ class VideoDataset(Dataset):
             frame = self.transform(frame)
         return frame
 
-    def check_integrity(self, workers=4):
+    def check_integrity(self, num_workers=4):
         video_name = os.path.basename(self.root)
         checksumfile = os.path.join(self.root, video_name + '.sha1')
         checksums = dict()
@@ -137,7 +158,8 @@ class VideoDataset(Dataset):
             for line in infile:
                 expected, block_filename = line.strip().split(' *')
                 checksums[os.path.join(self.root, block_filename)] = expected
-        if workers <= 1:
+        if num_workers <= 1:
+            # fail fast check
             for checksum_line in checksums.items():
                 errno = check_file_integrity(checksum_line)
                 if errno == DATASET_CORRUPTED | DATASET_NOT_FOUND:
@@ -146,13 +168,12 @@ class VideoDataset(Dataset):
                     raise RuntimeError('Dataset corrupted')
         else:
             # fail fast multiprocessing is too difficult to implement ...
-            pool = multiprocessing.Pool(workers)
-            errnos = pool.map(check_file_integrity, checksums.items())
-            if DATASET_NOT_FOUND | DATASET_CORRUPTED in errnos:
-                raise RuntimeError('Dataset not found or corrupted')
-            elif DATASET_CORRUPTED in errnos:
-                raise RuntimeError('Dataset corrupted')
-            pool.close()
+            with utils.poolcontext(num_workers) as pool:
+                errnos = pool.map(check_file_integrity, checksums.items())
+                if DATASET_NOT_FOUND | DATASET_CORRUPTED in errnos:
+                    raise RuntimeError('Dataset not found or corrupted')
+                elif DATASET_CORRUPTED in errnos:
+                    raise RuntimeError('Dataset corrupted')
 
     def locate_block(self, frame_id):
         """
@@ -203,6 +224,128 @@ class PairedVideoDataset(Dataset):
     def __getitem__(self, item):
         return tuple(ds[item] for ds in self.dataset_pair)
 
+
+class InconsistentBlockSizeError(BaseException):
+    def __init__(self, *args):
+        """
+        >>> print InconsistentBlockSizeError(3, 2, 1)
+        'Invalid write attempt (history block size): 3, 2, 1'
+        """
+        BaseException.__init__(self, 'Invalid write attempt (history block '
+                               'size): {}'.format(', '.join(map(str, args))))
+
+class VideoDatasetWriter(object):
+    r"""
+    Create video dataset from numpy arrays.
+    The created dataset will have the following directory hierarchy::
+
+        dataset_root/
+        |- video_name_0/
+        |  |- video_name_0.json
+        |  |- video_name_0.sha1
+        |  |- (optional, not created by this class) nml-stat.npz
+        |  |- B0.h5
+        |  |- B1.h5
+        |  |- ...
+        |  \- BM.h5
+        |- ...
+        |- video_name_x/
+        |  |- ...
+        \  \- BN.h5
+
+    where the json file contains metainfo of the dataset; the sha1 file
+    contains integrity info of the data blocks "Bx.h5"; and "Bx.h5" are data
+    blocks in compressed HDF5 format. The data will be converted to numpy array
+    before writing. The number of frames included in each data block should be
+    consistent, except for the last block that's allowed to hold no larger than
+    the block size.
+    """
+    def __init__(self, root, meta=None):
+        """
+        :param root: the root directory of the dataset
+        :param meta: meta info of the dataset to create other than 'block_size'
+               (number of frames for each block) and 'total_frames' (total
+               number of frames of the underlying video)
+        """
+        self.root = root
+        self.meta = dict() if meta is None else meta
+        self.bid = 0  # the next block ID to use
+        self.block_size_cache = deque([None, None], maxlen=2)
+        self.total_frames = 0
+
+    def write_block(self, data):
+        """
+        :param data: the data block to write, where ``data.shape[0]`` is
+               treated as the number of frames in the block, i.e. the block
+               size
+        :type data: numpy.ndarray
+        :raise InconsistentBlockSizeError: let current call of this function
+               be the k-th invocation; if the block size of the (k-2)-th
+               is different from the (k-1)-th's, this error will be raised
+        """
+        assert isinstance(data, np.ndarray)
+        self._ensure_blocksize_consistency()
+        tofile = self._get_current_blockfile()
+        with open(tofile, 'w') as outfile:
+            hickle.dump(data, outfile, compression='gzip')
+        self.bid += 1
+        self.block_size_cache.append(data.shape[0])
+        self.total_frames += data.shape[0]
+
+    def compute_checksum(self, num_workers=4):
+        """
+        Compute checksums.
+
+        :param num_workers: number of processes to do file hashing, default
+               to 4
+        :return: the checksum lines
+        :rtype: List[Tuple[str, str]]
+        """
+        block_files = map(lambda name: os.path.join(self.root, name),
+                          filter(VideoDataset.BLOCKFILE_PAT.match,
+                                 os.listdir(self.root)))
+        if num_workers <= 1:
+            checksum_lines = map(compute_file_integrity, block_files)
+        else:
+            with utils.poolcontext(num_workers) as pool:
+                checksum_lines = pool.map(compute_file_integrity, block_files)
+        return checksum_lines
+
+    def wrap_up(self, num_workers=4):
+        """
+        Compute integrities and write meta-info file.
+
+        :param num_workers: number of processes to do file hashing, default 4
+        :type num_workers: int
+        """
+        self._ensure_blocksize_consistency(finalizing=True)
+        checksum_lines = self.compute_checksum()
+        video_name = os.path.basename(self.root)
+        checksumfile = os.path.join(self.root,
+                                    '.'.join([video_name,
+                                              DATASET_HASH_ALGORITHM]))
+        # TODO
+
+    @property
+    def block_size(self):
+        return self.block_size_cache[0]
+
+    def _get_current_blockfile(self):
+        return os.path.join(self.root,
+                            VideoDataset.BLOCKFILE_TMPL.format(self.bid))
+
+    def _ensure_blocksize_consistency(self, finalizing=False):
+        """
+        :param finalizing: True to indicate all writings have been completed
+        :type finalizing: bool
+        :raise InconsistentBlockSizeError: if inconsistent block size occurs
+        """
+        prev2_write, prev1_write = tuple(self.block_size_cache)
+        if prev2_write is not None and prev1_write is not None:
+            if not finalizing and prev2_write != prev1_write:
+                raise InconsistentBlockSizeError(prev2_write, prev1_write)
+            elif finalizing and prev2_write < prev1_write:
+                raise InconsistentBlockSizeError(prev2_write, prev1_write)
 
 def prepare_video_dataset(channel, index, rootdir=None, normalized=False,
                           additional_transforms=None):

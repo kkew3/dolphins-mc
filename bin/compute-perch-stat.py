@@ -11,13 +11,12 @@ from torch.utils.data import DataLoader
 from torch.utils.data.sampler import Sampler
 import torchvision.transforms as trans
 
-import vdata
+import vhdata
 
 
 def vdset(root):
     try:
-        return root, vdata.VideoDataset(root, max_block_cached=2,
-                                        transform=trans.ToTensor())
+        return root, vhdata.VideoDataset(root, transform=trans.ToTensor())
     except:
         raise argparse.ArgumentTypeError('Error loading dataset "{}"'
                                          .format(root))
@@ -81,8 +80,8 @@ def plot_hists(root, mean, std, n_samples, outdir):
         trans.ToTensor(),
         trans.Normalize(mean=mean, std=std),
     ])
-    raw_dset = vdata.VideoDataset(root, transform=trans.ToTensor())
-    dset = vdata.VideoDataset(root, transform=transform)
+    raw_dset = vhdata.VideoDataset(root, transform=trans.ToTensor())
+    dset = vhdata.VideoDataset(root, transform=transform)
     sam = RandomSubsetSampler(dset, n_samples)
     raw_dataloader = DataLoader(raw_dset, sampler=sam, batch_size=1, num_workers=1)
     dataloader = DataLoader(dset, sampler=sam, batch_size=1, num_workers=1)
