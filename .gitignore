@@ -27,6 +27,7 @@ test-res/
 *.tar.gz
 *.tgz
 *.zip
+*.h5
 
 # (large) media files
 *.avi
@@ -51,3 +52,6 @@ _*.py
 
 # cloned repo (as reference)
 src/prednet_ref1_pytorch/
+
+# profile result
+**/profile/
