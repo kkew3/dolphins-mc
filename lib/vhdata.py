@@ -3,9 +3,11 @@ Defines the video dataset class and related functions.
 """
 import json
 import os
+import sys
 from collections import deque
 from operator import methodcaller
 
+from filelock import FileLock
 import h5py
 import numpy as np
 from torch.utils.data import Dataset
@@ -127,6 +129,7 @@ class VideoDataset(AbstractH5Dataset):
         super(VideoDataset, self).__init__(root)
         self.frame_data = self.h5file.get(type(self).H5DATASET_NAME)
         self.transform = transform
+        self.access_lock = FileLock(os.path.join(root, os.path.basename(root) + '.access.lock'))
 
     def __len__(self):
         return self.frame_data.len()
@@ -139,13 +142,21 @@ class VideoDataset(AbstractH5Dataset):
         :param index: the index to load; ``index`` should not be a slice
         :type index: int
         """
-        assert not isinstance(index, slice)
-        frame = np.array(self.frame_data[index], dtype=np.uint8)
-        frame = np.transpose(frame, (1, 2, 0))  # of dimension HWC
-        frame = Image.fromarray(frame)
-        if self.transform is not None:
-            frame = self.transform(frame)
-        return frame
+        try:
+            assert not isinstance(index, slice)
+            with self.access_lock:
+                # According to HDF Group, the HDF5 file can be accessed by only
+                # one process at a time; otherwise undefined behavior will
+                # occur
+                frame = np.array(self.frame_data[index], dtype=np.uint8)
+            frame = np.transpose(frame, (1, 2, 0))  # of dimension HWC
+            frame = Image.fromarray(frame)
+            if self.transform is not None:
+                frame = self.transform(frame)
+            return frame
+        except IOError:
+            print >> sys.stderr, 'IOError raised when index={}'.format(index)
+            raise
 
     @property
     def attrs(self):
