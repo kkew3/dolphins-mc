@@ -13,7 +13,7 @@ Directory structure::
     .. code-block:: plain
 
         video_name/
-        |- tmp/                           # temporarily store uncompressed data
+        |- tmp/                           # temporarily cached uncompressed data
         |  |- data_batch_x
         |  |- data_batch_y
         |  |- ...
@@ -23,7 +23,10 @@ Directory structure::
         |- data_batch_n.gz
         |- video_name.json                # metadata, see below
         |- video_name.sha1                # sha1 of data batches
-        |- video_name.access.lock         # mutex file lock
+        |- video_name.access0.lock        # mutex file lock for data_batch_0.gz
+        | -video_name.access1.lock        # mutex file lock for data_batch_1.gz
+        |- ...
+        |- video_name.accessn.lock
 
 
 Metadata
@@ -45,25 +48,23 @@ Content of the JSON file::
         }
 """
 
+import bisect
 import gzip
+import hashlib
+import json
+import operator as op
 import os
 import re
-import json
-import hashlib
-import operator as op
-from typing import Iterable, Callable, Iterator, List, Tuple
-import bisect
 import shutil
 
-from filelock import FileLock
-from cachetools import LRUCache
-from pathlib2 import Path
-import numpy as np
-from torch.utils.data import Dataset
 import cv2
+import numpy as np
+from cachetools import LRUCache
+from filelock import FileLock
+from torch.utils.data import Dataset
+from typing import Iterable, Iterator, List, Tuple
 
 import utils
-
 
 HASH_ALGORITHM = 'sha1'
 DATABATCH_FILENAME_PAT = re.compile(r'^data_batch_(\d+)$')
@@ -74,13 +75,13 @@ def parse_checksum_file(filename):
     Parse checksum file as created by ``/usr/bin/sha1sum``.
 
     :param filename: the checksum filename
-    :type filename: Path
+    :type filename: str
     :return: a list ``l`` such that ``l[i]`` contains the expected hash of the
              i-th batch
     :rtype: List[str]
     """
     checksum_lines = []
-    with filename.open() as infile:
+    with open(filename) as infile:
         for i, line in enumerate(infile):
             expected_hex, f = line.strip().split(None, 1)
             if f.startswith('*'):
@@ -102,22 +103,33 @@ def parse_checksum_file(filename):
     return expected_hexes
 
 
+def compute_file_integrity(filename):
+    """
+    Compute file integirty using HASH_ALGORITHM.
+
+    :param filename: the filename to check integrity
+    :type filename: str
+    :return: the hex string of the file hash
+    :rtype: str
+    """
+    hashbuf = hashlib.new(HASH_ALGORITHM)
+    with open(filename, 'rb') as infile:
+        for block in iter(lambda: infile.read(11048576), b''):
+            hashbuf.update(block)
+    return hashbuf.hexdigest()
+
 def check_file_integrity(filename, expected_hex):
     """
     Check file integrity using HASH_ALGORITHM.
 
     :param filename: the filename to check integrity
-    :type filename: Path
+    :type filename: str
     :param expected_hex: the expected hash hex
     :type expected_hex: str
     :return: True if the check passes
     :rtype: bool
     """
-    hashbuf = hashlib.new(HASH_ALGORITHM)
-    with filename.open('rb') as infile:
-        for block in iter(lambda: infile.read(11048576), b''):
-            hashbuf.update(block)
-    actual_hex = hashbuf.hexdigest()
+    actual_hex = compute_file_integrity(filename)
     return actual_hex == expected_hex
 
 def accumulate(iterable, func=op.add):
@@ -157,53 +169,88 @@ def accumulate(iterable, func=op.add):
         total = func(total, element)
         yield total
 
+def compress_gzip(fromfile, tofile):
+    """
+    Compress a file into gzip file.
+
+    :param fromfile: the file to compress
+    :type fromfile: str
+    :param tofile: the target gzip file
+    :type tofile: str
+    """
+    with gzip.open(tofile, 'wb') as outfile:
+        with open(fromfile, 'rb') as infile:
+            shutil.copyfileobj(infile, outfile)
+
 def extract_gzip(fromfile, tofile):
     """
+    Extract file content from a gzip file to an uncompressed file.
+
     :param fromfile: source gzip file
-    :type fromfile: Path
+    :type fromfile: str
     :param tofile: target file to write
-    :type tofile: Path
+    :type tofile: str
     """
-    with gzip.open(str(fromfile), 'rb') as infile:
-        with tofile.open('wb') as outfile:
+    with gzip.open(fromfile, 'rb') as infile:
+        with open(tofile, 'wb') as outfile:
             shutil.copyfileobj(infile, outfile)
+
+def get_dset_filename_by_ext(root, ext):
+    """
+    Returns the filename of the file under root whose name is the same as root.
+
+    :param root: the dataset root directory
+    :type root: str
+    :param ext: the extension name of the target file
+    :type ext: str
+    :return: the full filename of the target file
+    :rtype: str
+    """
+    return os.path.join(root, os.path.basename(root) + ext)
 
 class VideoDataset(Dataset):
     """
     Represents the video dataset (readonly).
     """
-    def __init__(self, root, transform=None, max_mmap=1):
+    def __init__(self, root, transform=None, max_mmap=1, max_gzcache=3):
         """
         :param root: the root directory of the dataset
-        :type root: Union[str, Path]
+        :type root: str
         :param transform: the transformations to be performed on loaded data
         :param max_mmap: the maximum number of memory map to keep
+        :type max_mmap: int
+        :param max_gzcache: the maximum number of extracted memory map files to
+               keep on disk
+        :type max_gzcache: int
         """
-        self.root = Path(root).resolve()  # type: Path
-        jsonfile = self.root / (self.root.stem + '.json')
-        with jsonfile.open() as infile:
+        self.root = root
+        jsonfile = get_dset_filename_by_ext(root, '.json')
+        with open(jsonfile) as infile:
             self.metainfo = json.load(infile)
-        self.total_frames = np.prod(self.metainfo['lens'])
+        self.total_frames = np.sum(self.metainfo['lens'])
         self.lens_cumsum = list(accumulate(self.metainfo['lens']))
         shape = self.metainfo['resolution'] + [self.metainfo['channels']]
         self.frame_shape = tuple(shape)
 
         # if self.validated_batches[i] == 0, then batch i hasn't been validated
         self.validated_batches = [False] * len(self.metainfo['lens'])
-        checksumfile = self.root / (self.root.stem + '.' + HASH_ALGORITHM)
+        checksumfile = get_dset_filename_by_ext(root, '.' + HASH_ALGORITHM)
         self.expected_hexes = parse_checksum_file(checksumfile)
 
-        self.root_tmp = self.root / 'tmp'  # type: Path
-        if not self.root_tmp.is_dir():
-            self.root_tmp.mkdir()
+        self.root_tmp = os.path.join(root, 'tmp')
+        if not os.path.isdir(self.root_tmp):
+            os.mkdir(self.root_tmp)
 
         self.transform = transform
 
         max_mmap = max(1, max_mmap)
         self.mmap_cache = LRUCache(maxsize=max_mmap)
+        self.max_gzcache = max(max_mmap, max_gzcache)
 
-        lockfile = self.root / (self.root.stem + '.access.lock')
-        self.access_lock = FileLock(str(lockfile))
+        # fine granularity lock for each data batch
+        lockfile_tmpl = get_dset_filename_by_ext(root, '.access{}.lock')
+        self.access_locks = [FileLock(lockfile_tmpl.format(bid))
+                             for bid in range(len(self.metainfo['lens']))]
 
     def __len__(self):
         """
@@ -222,14 +269,17 @@ class VideoDataset(Dataset):
         :return: the frame in numpy array of dimension HWC
         :rtype: np.ndarray
         """
+        if frame_id < 0 or frame_id >= len(self):
+            raise IndexError('Invalid index: {}'.format(frame_id))
+
         batch_id, rel_frame_id = self.locate_batch(frame_id)
-        with self.access_lock:
+        with self.access_locks[batch_id]:
             if batch_id not in self.mmap_cache:
                 batchf = self.batch_filename_by_id(batch_id)
-                if not batchf.is_file():
+                if not os.path.isfile(batchf):
                     extract_gzip(self.batch_filename_by_id(batch_id, gzipped=True),
                                  batchf)
-                    assert batchf.is_file()
+                    assert os.path.isfile(batchf)
                 if not self.validated_batches[batch_id]:
                     if not check_file_integrity(batchf, self.expected_hexes[batch_id]):
                         raise RuntimeError('Data batch {} corrupted'.format(batch_id))
@@ -239,10 +289,42 @@ class VideoDataset(Dataset):
                 self.mmap_cache[batch_id] = np.memmap(str(batchf), mode='r',
                                                       dtype=self.metainfo['dtype'],
                                                       shape=shape)
-        return np.copy(self.mmap_cache[batch_id][rel_frame_id])
+        frame = np.copy(self.mmap_cache[batch_id][rel_frame_id])
+        if self.transform is not None:
+            frame = self.transform(frame)
+        self.cleanup_unused_mmapfiles()
+        return frame
+
+    def cleanup_unused_mmapfiles(self):
+        for filename in os.listdir(self.root_tmp):
+            matched = DATABATCH_FILENAME_PAT.match(filename)
+            if matched:
+                batch_id = int(matched.group(1))
+                with self.access_locks[batch_id]:
+                    if batch_id not in self.mmap_cache and \
+                            len(os.listdir(self.root_tmp)) > self.max_gzcache:
+                        try:
+                            os.remove(os.path.join(self.root_tmp, filename))
+                        except OSError:
+                            # due to concurrency, the file may have already been
+                            # removed; due to the lock, however, no process will
+                            # try to remove a file when another process is
+                            # removing exactly the same file
+                            pass
+
+    def cleanup_all_mmapfiles(self):
+        """
+        Be sure to call this function only if there's no opened memory-mapped
+        file.
+        """
+        if os.path.isdir(self.root_tmp):
+            shutil.rmtree(self.root_tmp)
+        if not os.path.isdir(self.root_tmp):
+            os.mkdir(self.root_tmp)
 
     def __del__(self):
         self.release_mmap()
+        self.cleanup_all_mmapfiles()
 
     def __enter__(self):
         return self
@@ -254,7 +336,8 @@ class VideoDataset(Dataset):
         """
         Release all memory mapped dataset.
         """
-        for k in self.mmap_cache:
+        keys = list(self.mmap_cache.keys())
+        for k in keys:
             del self.mmap_cache[k]
 
     def locate_batch(self, frame_id):
@@ -266,8 +349,14 @@ class VideoDataset(Dataset):
         :return: the batch ID and the relative frame ID
         :rtype: Tuple[int, int]
         """
-        batch_id = bisect.bisect_left(self.lens_cumsum, frame_id)
-        rel_frame_id = frame_id - self.lens_cumsum[batch_id]
+        batch_id = bisect.bisect_left(self.lens_cumsum, frame_id + 1)
+        try:
+            rel_frame_id = frame_id - self.lens_cumsum[batch_id]
+        except:
+            print 'batch_id:', batch_id
+            print 'cumsum:', self.lens_cumsum
+            print 'frame_id+1:', frame_id+1
+            raise
         return batch_id, rel_frame_id
 
     def batch_filename_by_id(self, batch_id, gzipped=False):
@@ -283,18 +372,88 @@ class VideoDataset(Dataset):
         :rtype: Path
         """
         if gzipped:
-            return self.root / 'data_batch_{}.gz'.format(batch_id)
+            return os.path.join(self.root, 'data_batch_{}.gz'.format(batch_id))
         else:
-            return self.root_tmp / 'data_batch_{}'.format(batch_id)
+            return os.path.join(self.root_tmp, 'data_batch_{}'.format(batch_id))
 
 
-def create_vdset(video_file, root):
-    """
+def create_vdset(video_file, root, batch_size=1000, max_batches=None):
+    r"""
     Create ``VideoDataset`` on disk from video.
 
     :param video_file: the video filename
-    :type video_file: Path
+    :type video_file: str
     :param root: the dataset root directory
-    :type root: Path
+    :type root: str
+    :param batch_size: the number of frames to be stored in one memory mapped
+           file; note that the size of the file will be
+           :math:`\text{batch\_size} \times 3 \times w \times h` bytes
+    :type batch_size: int
+    :param max_batches: the maximum number of batches to write; ``None`` means
+           as many as possible
+    :type max_batches: Optional[int]
     """
-    pass
+    video_file = os.path.realpath(video_file)
+    root = os.path.realpath(root)  # type: str
+    if not os.path.isdir(root):
+        os.mkdir(root)
+    if not os.path.isdir(os.path.join(root, 'tmp')):
+        os.mkdir(os.path.join(root, 'tmp'))
+
+    channels = 3
+    dimension = 'NHWC'
+    dtype = 'uint8'
+    lens = []
+    checksum_lines = []
+    with utils.capcontext(video_file) as cap:  # type: cv2.VideoCapture
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        resolution = height, width
+
+        vit = utils.FrameIterator(cap, max_len=batch_size)
+        frames = list(vit)
+        while frames:
+            lens.append(len(frames))
+            frames = np.concatenate(frames, axis=0)
+            batch_id = len(lens) - 1
+
+            # create memory mapped file
+            batch_filename = os.path.join(root, 'tmp', 'data_batch_{}'.format(batch_id))
+            with utils.memmapcontext(batch_filename, dtype,
+                                     frames.shape, mode='w+') as mm:
+                mm[:] = frames
+
+            # compute hash
+            actual_hex = compute_file_integrity(batch_filename)
+            checksum_lines.append((actual_hex, os.path.basename(batch_filename)))
+
+            # compress
+            batch_gzipfilename = os.path.join(root, 'data_batch_{}.gz'.format(batch_id))
+            compress_gzip(batch_filename, batch_gzipfilename)
+
+            # remove the uncompressed memory mapped file
+            os.remove(batch_filename)
+
+            # reset frame iterator and prepare for next round, if any
+            if max_batches is not None and len(lens) == max_batches:
+                break
+            vit.reset_counter()
+            frames = list(vit)
+
+    assert len(lens) == max_batches
+
+    checksumfile = get_dset_filename_by_ext(root, '.' + HASH_ALGORITHM)
+    with open(str(checksumfile), 'w') as outfile:
+        for row in checksum_lines:
+            outfile.write('  '.join(row) + '\n')
+
+    metainfo = {
+        'lens': lens,
+        'resolution': resolution,
+        'channels': channels,
+        'dimension': dimension,
+        'dtype': dtype,
+    }
+    metafile = get_dset_filename_by_ext(root, '.json')
+    with open(str(metafile), 'w') as outfile:
+        json.dump(metainfo, outfile)

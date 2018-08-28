@@ -5,6 +5,7 @@ Global library for other dedicated library or project/branch-specific codes.
 import os
 import sys
 from contextlib import contextmanager
+from typing import Iterator
 import multiprocessing
 
 import numpy as np
@@ -15,10 +16,15 @@ import cv2
 def capcontext(video_file):
     """
     Context manager that handles the release of video capture object.
+
+    :param video_file: the video file path
+    :type video_file: str
     """
     cap = cv2.VideoCapture(video_file)
-    yield cap
-    cap.release()
+    try:
+        yield cap
+    finally:
+        cap.release()
 
 
 class FrameIterator(object):
@@ -51,8 +57,8 @@ class FrameIterator(object):
             s, f = self.cap.read()
             if s:
                 self._read_count += 1
-                # BGR -> RGB
-                return f[:,:,::-1]
+                f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+                return f
         raise StopIteration()
 
     def __iter__(self):
@@ -109,3 +115,23 @@ def suppress_stdout():
             yield
         finally:
             sys.stdout = old_stdout
+
+@contextmanager
+def memmapcontext(filename, dtype, shape, offset=0, mode='r'):
+    """
+    :param filename: the memory mapped filename
+    :type filename: str
+    :param dtype: data type
+    :type dtype: Union[str, np.dtype]
+    :param shape: data shape
+    :type shape: Tuple[int]
+    :param offset: offset in units of number of elements
+    :param mode:
+    :return:
+    """
+    mm = np.memmap(filename, mode=mode, shape=shape, dtype=dtype,
+                   offset=np.dtype(dtype).itemsize * offset)
+    try:
+        yield mm
+    finally:
+        del mm

@@ -12,7 +12,6 @@ hickle
 matplotlib
 cachetools
 ddlogger
-pathlib2
 filelock
 
 # IDE support
