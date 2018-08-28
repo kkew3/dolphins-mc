@@ -13,7 +13,6 @@ import numpy as np
 from torch.utils.data import Dataset
 from torch.utils.data.dataset import ConcatDataset
 import torchvision.transforms as trans
-from PIL import Image
 
 
 # str.format template
@@ -150,7 +149,6 @@ class VideoDataset(AbstractH5Dataset):
                 # occur
                 frame = np.array(self.frame_data[index], dtype=np.uint8)
             frame = np.transpose(frame, (1, 2, 0))  # of dimension HWC
-            frame = Image.fromarray(frame)
             if self.transform is not None:
                 frame = self.transform(frame)
             return frame
@@ -312,7 +310,6 @@ class VideoSegmentDataset(AbstractH5Dataset):
         assert not isinstance(index, slice)
         frame = np.array(self.frame_data[index], dtype=np.uint8)
         frame = np.transpose(frame, (1, 2, 0))  # of dimension HWC
-        frame = Image.fromarray(frame)
         if self.transform is not None:
             frame = self.transform(frame)
         return frame
