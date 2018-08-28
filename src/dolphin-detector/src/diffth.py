@@ -24,7 +24,7 @@ def dataset_diff(dataset):
     :param dataset: the video dataset
     :type dataset: vhdata.VideoDataset
     """
-    dataloader = DataLoader(dataset, batch_size=99, shuffle=False)
+    dataloader = more_trans.numpy_loader(DataLoader(dataset, batch_size=99, shuffle=False))
     prev_last = None
     for frames in dataloader:
         # frames: numpy array of dimension BCHW
@@ -46,16 +46,13 @@ def write_ddataset(dataset, toroot):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Write absolute difference '
                                      'frames to ../runs/root')
-    parser.add_argument('-c', type=int, choices=[8, 9],
+    parser.add_argument('-c', type=int, choices=[7, 8, 9],
                         help='camera channel id')
     parser.add_argument('-i', nargs=3, type=int, help='camera id')
     args = parser.parse_args()
 
     dset = vhdata.VideoDataset(vhdata.prepare_dataset_root(args.c, tuple(args.i)),
-                               transform=trans.Compose([
-                                   more_trans.ToNumpy(),
-                                   more_trans.HWC2CHW(),
-                               ]))
+                               transform=trans.ToTensor())
     toroot = os.path.join(os.path.dirname(__file__), '..', 'runs',
                           os.path.basename(dset.root) + '_diff')
     toroot = os.path.realpath(toroot)
