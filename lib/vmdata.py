@@ -69,6 +69,13 @@ import utils
 HASH_ALGORITHM = 'sha1'
 DATABATCH_FILENAME_PAT = re.compile(r'^data_batch_(\d+)$')
 
+# str.format template
+# example: DEFAULT_DATASET_ROOTNAME_TMPL.format(8, (8, 0, 0))
+DEFAULT_DATASET_ROOTNAME_TMPL = 'CH{0:0>2}-{1[0]:0>2}_{1[1]:0>2}_{1[2]:0>2}'
+
+# npz file containing mean and std info of the dataset
+NORMALIZATION_INFO_FILE = 'nml-stat.npz'
+
 
 def parse_checksum_file(filename):
     """
@@ -444,10 +451,12 @@ def create_vdset(video_file, root, batch_size=1000, max_batches=None):
             vit.reset_counter()
             frames = list(vit)
 
-    assert len(lens) == max_batches
+    if max_batches is not None:
+        assert len(lens) == max_batches, 'len(lens) ({}) != max_batches ({})'\
+                .format(len(lens), max_batches)
 
     checksumfile = get_dset_filename_by_ext(root, '.' + HASH_ALGORITHM)
-    with open(str(checksumfile), 'w') as outfile:
+    with open(checksumfile, 'w') as outfile:
         for row in checksum_lines:
             outfile.write('  '.join(row) + '\n')
 
@@ -459,7 +468,7 @@ def create_vdset(video_file, root, batch_size=1000, max_batches=None):
         'dtype': dtype,
     }
     metafile = get_dset_filename_by_ext(root, '.json')
-    with open(str(metafile), 'w') as outfile:
+    with open(metafile, 'w') as outfile:
         json.dump(metainfo, outfile)
 
 
