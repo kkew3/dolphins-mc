@@ -249,6 +249,10 @@ class VideoDataset(Dataset):
 
         # fine granularity lock for each data batch
         lockfile_tmpl = get_dset_filename_by_ext(root, '.access{}.lock')
+        # note that I use the absolute to construct the file lock, so that the
+        # lock will be shared by not only different processes, but also several
+        # instances of this class, as long as they have been assigned the same
+        # root
         self.access_locks = [FileLock(lockfile_tmpl.format(bid))
                              for bid in range(len(self.metainfo['lens']))]
 
@@ -315,7 +319,8 @@ class VideoDataset(Dataset):
     def cleanup_all_mmapfiles(self):
         """
         Be sure to call this function only if there's no opened memory-mapped
-        file.
+        file. Usually this function is unnecessary unless the user want to save
+        some disk space.
         """
         if os.path.isdir(self.root_tmp):
             shutil.rmtree(self.root_tmp)
@@ -324,7 +329,6 @@ class VideoDataset(Dataset):
 
     def __del__(self):
         self.release_mmap()
-        self.cleanup_all_mmapfiles()
 
     def __enter__(self):
         return self
@@ -457,3 +461,53 @@ def create_vdset(video_file, root, batch_size=1000, max_batches=None):
     metafile = get_dset_filename_by_ext(root, '.json')
     with open(str(metafile), 'w') as outfile:
         json.dump(metainfo, outfile)
+
+
+def get_normalization_stats(root):
+    """
+    Returns the normalization statistics (mean, std) in preprocessing step
+    when loading the dataset. The normalization data presents in a ``npz``
+    file ``$NORMALIZATION_INFO_FILE`` under the dataset root directory.
+
+    Usage example::
+
+        .. code-block::
+
+            import torchvision.transforms as trans
+            normalize = trans.Normalize(*get_normalization_stats(root))
+
+    :param root: the root directory of the video dataset
+    :raise IOError: if the ``$NORMALIZATION_INFO_FILE`` is not found under
+           ``root``, which may due to spelling error in ``root`` or the file
+           is absent as a matter of fact. For the latter case, compute the
+           normalization statistics (using
+           ``$PROJECT_HOME/bin/compute-perch-stat.py``), put the result file
+           to the root directory, before calling this function.
+    :return: the mean and std
+    :rtype: Tuple[Tuple[float], Tuple[float]]
+    """
+    data = np.load(os.path.join(root, NORMALIZATION_INFO_FILE))
+    mean = tuple(map(float, data['mean']))
+    std = tuple(map(float, data['std']))
+    return mean, std
+
+def prepare_dataset_root(cam_channel, video_index):
+    """
+    A convenient function to get the root directory of dataset of which the
+    name is named after DEFAULT_DATASET_ROOTNAME_TMPL and resides under
+    PYTORCH_DATA_HOME.
+
+    :param cam_channel: the camera channel ID
+    :type cam_channel: int
+    :param video_index: the video index, a 3-tuple of integers
+    :type video_index: Tuple[int, int, int]
+    :return: the root directory
+    :rtype: str
+    """
+    root = os.path.join(os.environ['PYTORCH_DATA_HOME'],
+                        DEFAULT_DATASET_ROOTNAME_TMPL.format(cam_channel,
+                                                             video_index))
+    if not os.path.isdir(root):
+        raise ValueError('root "{}" is not an existing directory'
+                         .format(root))
+    return root
