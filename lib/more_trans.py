@@ -1,23 +1,30 @@
-from functools import partial
-
 import numpy as np
-import torchvision.transforms as trans
+import torch
+from scipy.ndimage import filters
+from typing import Sequence, Callable
 
 
 class DeNormalize(object):
     """
-    The inverse transformation of ``tochvision.transforms.Normalize``.
+    The inverse transformation of ``tochvision.transforms.Normalize``. As in
+    ``tochvision.transforms.Normalize``, this operation modifies input tensor
+    in place.
 
     :param mean: the mean used in ``Normalize``
     :param std: the std used in ``Normalize``
     """
     def __init__(self, mean, std):
-        self.mean = mean
-        self.std = std
+        self.mean = torch.tensor(mean, dtype=torch.float).view(1, -1, 1, 1)
+        self.std = torch.tensor(std, dtype=torch.float).view(1, -1, 1, 1)
 
     def __call__(self, tensor):
-        return tensor * self.std + self.mean
-
+        """
+        :param tensor: tensor of dimension [B x C x H x W] where B is the
+               batch size and C the number of input channels
+        """
+        tensor.mul_(self.std)
+        tensor.add_(self.mean)
+        return tensor
 
 class ResetChannel(object):
     """
@@ -35,47 +42,49 @@ class ResetChannel(object):
         tensor[self.channel].zero_()
         return tensor
 
-class ResetChannelNumpy(object):
+class GaussianBlur(object):
     """
-    Same as ``ResetChannel`` but for numpy array.
+    Applicable only to Numpy arrays; thus it should be inserted before
+    ``trans.ToTensor()``.
     """
-    def __init__(self, channel):
-        self.channel = channel
-
-    def __call__(self, tensor):
-        tensor = np.copy(tensor)
-        tensor[self.channel] = np.zeros(tensor.shape[1:])
-        return tensor
-
-
-class ToNumpy(object):
-    """
-    Converts from ``PIL.Image`` to numpy array, which involves normalizing all
-    pixel values from range [0, 256) to [0.0, 1.0).
-    """
-    def __init__(self, dtype=np.float64):
+    def __init__(self, std=1.5, tr_std=4.0):
         """
-        :param dtype: the numpy data type, default to ``np.float64``
+        :param std: the standard deviations
+        :param tr_std: the upper limit of standard deviation beyond which the
+               deviation is truncated
         """
-        self.dtype = dtype
+        self.std = max(0.0, std)
+        self.tr_std = max(self.std, tr_std)
 
     def __call__(self, img):
-        tensor = np.asarray(img, dtype=np.float64)
-        tensor = tensor / 255.0
-        return np.array(tensor, dtype=self.dtype)
+        """
+        :param img: numpy array of dimension HWC
+        :return: blurred image
+        """
+        return filters.gaussian_filter(img, (self.std, self.std, 0.0),
+                                       truncate=self.tr_std)
 
+def hwc2chw(tensor):
+    """
+    Transpose a numpy array from HWC to CHW.
+    """
+    return np.transpose(tensor, (2, 0, 1))
 
-class HWC2CHW(object):
+def chw2hwc(tensor):
     """
-    Transposes numpy tensor from HWC to CHW.
+    Transpose a numpy array from CHW to HWC.
     """
-    def __call__(self, tensor):
-        return np.transpose(tensor, (2, 0, 1))
+    return np.transpose(tensor, (1, 2, 0))
 
+def numpy_loader(dataloader):
+    """
+    Generator that converts pytorch tensor to numpy array on the fly.
 
-class CHW2HWC(object):
+    :param dataloader: a dataloader instance
+    :type dataloader: torch.utils.data.DataLoader
     """
-    Transoses numpy tensor from CHW to HWC.
-    """
-    def __call__(self, tensor):
-        return np.transpose(tensor, (1, 2, 0))
+    for item in dataloader:
+        if isinstance(item, tuple):
+            yield tuple(x.numpy() for x in item)
+        else:
+            yield item.numpy()
