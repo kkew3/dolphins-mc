@@ -56,6 +56,7 @@ import operator as op
 import os
 import re
 import shutil
+import logging
 
 import cv2
 import numpy as np
@@ -65,6 +66,18 @@ from torch.utils.data import Dataset
 from typing import Iterable, Iterator, List, Tuple
 
 import utils
+
+#############################################
+# logging setting
+_cd = os.path.dirname(os.path.realpath(__file__))
+# log to ./.vmdata.log
+logging.basicConfig(format='[%(levelname)s] [%(asctime)s] (%(name)s) %(message)s',
+                    datefmt='%Y-%m-%d %I:%M:%S %p',
+                    filename=os.path.join(_cd, '.vmdata.log'),
+                    level=logging.DEBUG)
+# End of logging setting
+#############################################
+
 
 HASH_ALGORITHM = 'sha1'
 DATABATCH_FILENAME_PAT = re.compile(r'^data_batch_(\d+)$')
@@ -263,6 +276,10 @@ class VideoDataset(Dataset):
         self.access_locks = [FileLock(lockfile_tmpl.format(bid))
                              for bid in range(len(self.metainfo['lens']))]
 
+        logger = logging.getLogger('.'.join([type(self).__name__, '__init__']))
+        logger.info('Instantiated: root={}'.format(self.root))
+
+
     def __len__(self):
         """
         :return: the number of frames in the video
@@ -280,26 +297,45 @@ class VideoDataset(Dataset):
         :return: the frame in numpy array of dimension HWC
         :rtype: np.ndarray
         """
+        logger = logging.getLogger('.'.join([type(self).__name__, '__getitem__']))
         if frame_id < 0 or frame_id >= len(self):
             raise IndexError('Invalid index: {}'.format(frame_id))
 
         batch_id, rel_frame_id = self.locate_batch(frame_id)
+        logger.debug('Waiting for lock ID {}'.format(batch_id))
         with self.access_locks[batch_id]:
             if batch_id not in self.mmap_cache:
                 batchf = self.batch_filename_by_id(batch_id)
                 if not os.path.isfile(batchf):
+                    logger.info('Decompressing "{}"'.format(batchf))
                     extract_gzip(self.batch_filename_by_id(batch_id, gzipped=True),
                                  batchf)
-                    assert os.path.isfile(batchf)
+                    assert os.path.isfile(batchf), \
+                            '"{}" not found after decompressed'\
+                            .format(batchf)
                 if not self.validated_batches[batch_id]:
                     if not check_file_integrity(batchf, self.expected_hexes[batch_id]):
-                        raise RuntimeError('Data batch {} corrupted'.format(batch_id))
+                        logger.warning('File ingerity failed at "{}"; retrying'.format(batchf))
+                        # probably there's error with read last time; attempt
+                        # to decompress again for once
+                        os.remove(batchf)
+                        extract_gzip(self.batch_filename_by_id(batch_id, gzipped=True),
+                                     batchf)
+                        assert os.path.isfile(batchf), \
+                                '"{}" not found after decompressed'\
+                                .format(batchf)
+                        if not check_file_integrity(batchf, self.expected_hexes[batch_id]):
+                            logger.error('File integrity failed at "{}"; RuntimeError raised'.format(batchf))
+                            raise RuntimeError('Data batch {} corrupted'.format(batch_id))
                     self.validated_batches[batch_id] = True
+                    logger.info('File integrity check completed for batch {}'.format(batch_id))
 
                 shape = (self.metainfo['lens'][batch_id],) + self.frame_shape
+                logger.debug('keys before mmap cache adjustment: {}'.format(list(self.mmap_cache.keys())))
                 self.mmap_cache[batch_id] = np.memmap(str(batchf), mode='r',
                                                       dtype=self.metainfo['dtype'],
                                                       shape=shape)
+                logger.debug('keys after mmap cache adjustment: {}'.format(list(self.mmap_cache.keys())))
         frame = np.copy(self.mmap_cache[batch_id][rel_frame_id])
         if self.transform is not None:
             frame = self.transform(frame)
@@ -307,6 +343,7 @@ class VideoDataset(Dataset):
         return frame
 
     def cleanup_unused_mmapfiles(self):
+        logger = logging.getLogger('.'.join([type(self).__name__, 'cleanup_unused_mmapfiles']))
         for filename in os.listdir(self.root_tmp):
             matched = DATABATCH_FILENAME_PAT.match(filename)
             if matched:
@@ -322,6 +359,9 @@ class VideoDataset(Dataset):
                             # try to remove a file when another process is
                             # removing exactly the same file
                             pass
+                        else:
+                            logger.info('Decompressed batch "{}" removed'
+                                        .format(os.path.join(self.root_tmp, filename)))
 
     def cleanup_all_mmapfiles(self):
         """
@@ -329,10 +369,12 @@ class VideoDataset(Dataset):
         file. Usually this function is unnecessary unless the user want to save
         some disk space.
         """
+        logger = logging.getLogger('.'.join([type(self).__name__, 'cleanup_all_mmapfiles']))
         if os.path.isdir(self.root_tmp):
             shutil.rmtree(self.root_tmp)
         if not os.path.isdir(self.root_tmp):
             os.mkdir(self.root_tmp)
+        logger.info('All decompressed batches removed')
 
     def __del__(self):
         self.release_mmap()
@@ -347,9 +389,11 @@ class VideoDataset(Dataset):
         """
         Release all memory mapped dataset.
         """
+        logger = logging.getLogger('.'.join([type(self).__name__, 'release_mmap']))
         keys = list(self.mmap_cache.keys())
         for k in keys:
             del self.mmap_cache[k]
+        logger.info('All mmap released')
 
     def locate_batch(self, frame_id):
         """
