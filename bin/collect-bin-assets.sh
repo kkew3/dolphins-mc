@@ -39,6 +39,7 @@ bin_assets_list=$(find . -type f \( -name '*.pth' -or \
 	                            -name '*.p' -or \
 	                            -name '*.pkl' -or \
 				    -name '*.hkl' -or \
+				    -name '*.h5' -or \
 	                            -name '*.pickle' -or \
 				    -name '*.hickle' -or \
 	                            -name '*.dump' -or \
