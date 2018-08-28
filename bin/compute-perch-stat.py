@@ -1,25 +1,22 @@
 #!/usr/bin/env python
+import pdb
 import argparse
 import sys
 import os
 
 import numpy as np
 import scipy.stats
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import DataLoader
-from torch.utils.data.sampler import Sampler
 import torchvision.transforms as trans
 
-import vhdata
+import vmdata
+import more_trans
+import more_sampler
 
-
-def vdset(root):
-    try:
-        return root, vhdata.VideoDataset(root, transform=trans.ToTensor())
-    except:
-        raise argparse.ArgumentTypeError('Error loading dataset "{}"'
-                                         .format(root))
 
 def make_parser():
     parser = argparse.ArgumentParser(description='Compute the per-channel mean'
@@ -29,7 +26,7 @@ def make_parser():
                                      epilog='Returns a space-separated list of'
                                      ' real numbers for mean and a second list'
                                      ' of the same format for std.')
-    parser.add_argument('root', type=vdset,
+    parser.add_argument('root',
                         help='the root directory of the video dataset')
     parser.add_argument('-n', type=int, default=50,
                         help='number of random samples, default 10.0')
@@ -52,25 +49,6 @@ def make_parser():
                              'skewness of the normalized video frames')
     return parser
 
-class RandomSubsetSampler(Sampler):
-    def __init__(self, data_source, n, shuffle=False):
-        """
-        :param data_source: the dataset object
-        :param n: subset size
-        :param shuffle: False to sort the indices after sampling
-        """
-        self.data_source = data_source
-        self.n = n
-        self.shuffle = shuffle
-
-    def __len__(self):
-        return min(self.n, len(self.data_source))
-
-    def __iter__(self):
-        indices = torch.randperm(len(self.data_source)).tolist()[:self.n]
-        if not self.shuffle:
-            indices.sort()
-        return iter(indices)
 
 def plot_hists(root, mean, std, n_samples, outdir):
     if not os.path.isdir(outdir):
@@ -80,51 +58,57 @@ def plot_hists(root, mean, std, n_samples, outdir):
         trans.ToTensor(),
         trans.Normalize(mean=mean, std=std),
     ])
-    raw_dset = vhdata.VideoDataset(root, transform=trans.ToTensor())
-    dset = vhdata.VideoDataset(root, transform=transform)
-    sam = RandomSubsetSampler(dset, n_samples)
-    raw_dataloader = DataLoader(raw_dset, sampler=sam, batch_size=1, num_workers=1)
-    dataloader = DataLoader(dset, sampler=sam, batch_size=1, num_workers=1)
 
+    channel_data_raw = []
+    with vmdata.VideoDataset(root, transform=trans.ToTensor()) as raw_dset:
+        sam = more_sampler.RandomSubsetSampler(raw_dset, n_samples)
+        dl_params = {'sampler': sam, 'batch_size': 1, 'num_workers': 1}
+        raw_dl = more_trans.numpy_loader(DataLoader(raw_dset, **dl_params))
+        for raw_frame in raw_dl:
+            assert raw_frame.shape[0] == 1
+            raw_frame = raw_frame.reshape((raw_frame.shape[1], -1))
+            channel_data_raw.append(raw_frame)
+    channel_data_nml = []
+    with vmdata.VideoDataset(root, transform=transform) as dset:
+        # using the same sampler, `sam`; and the same dl paraeters, `dl_params`
+        dl = more_trans.numpy_loader(DataLoader(dset, **dl_params))
+        for frame in dl:
+            assert frame.shape[0] == 1
+            frame = frame.reshape((frame.shape[1], -1))
+            channel_data_nml.append(frame)
     plt.close('all')
-    for fid, frame, raw_frame in zip(sam, dataloader, raw_dataloader):
-        frame = frame.view(*frame.shape[1:])
-        frame = frame.view(frame.shape[0], -1).numpy()
-        raw_frame = raw_frame.view(*raw_frame.shape[1:])
-        raw_frame = raw_frame.view(raw_frame.shape[0], -1).numpy()
-
-        data = np.stack((frame, raw_frame))
-        data_names = ['nml', 'raw']
-
+    for fid, frame, raw_frame in zip(sam, channel_data_nml, channel_data_raw):
         plt.figure(figsize=(28, 21))
         for c in range(frame.shape[0]):
-            for d in range(2):
-                plt.subplot(frame.shape[0], 2, 2*c+d+1)
-                plt.hist(data[d,c])
-                plt.title('{} c{}'.format(data_names[d], c))
+            plt.subplot(frame.shape[0], 2, 2*c+1)
+            plt.hist(frame[c])
+            plt.title('nml c{}'.format(c))
+            plt.subplot(frame.shape[0], 2, 2*c+2)
+            plt.hist(raw_frame[c])
+            plt.title('raw c{}'.format(c))
         plt.savefig(os.path.join(outdir, 'f{}.png'.format(fid)))
         plt.close()
 
 def main():
     args = make_parser().parse_args()
-    root, dset = args.root
-    sam = RandomSubsetSampler(dset, args.n)
-    dataloader = DataLoader(dset, batch_size=args.n,
-                            sampler=sam, num_workers=2)
-    frames = next(iter(dataloader)).numpy()
-    assert frames.shape[0] == args.n, 'frames.shape[0] = {} != args.n = {}'\
-            .format(frames.shape[0], args.n)
-    assert len(frames.shape) == 4, 'len(frames.shape) = {}'.format(len(frames.shape))
-    frames = frames.transpose((1, 0) + tuple(range(len(frames.shape)))[2:])
-    frames = frames.reshape((frames.shape[0], -1))
+    with vmdata.VideoDataset(args.root, transform=trans.ToTensor()) as dset:
+        sam = more_sampler.RandomSubsetSampler(dset, args.n)
+        dataloader = more_trans.numpy_loader(
+            DataLoader(dset, batch_size=args.n,
+                       sampler=sam, num_workers=2))
+        frames = next(iter(dataloader))
+        assert frames.shape[0] == args.n, 'frames.shape[0] = {} != args.n = {}'\
+                .format(frames.shape[0], args.n)
+        frames = frames.transpose((1, 0) + tuple(range(len(frames.shape)))[2:])
+        frames = frames.reshape((frames.shape[0], -1))
 
-    means = np.mean(frames, axis=1)
-    stds = np.std(frames, axis=1)
-    skews = np.abs(scipy.stats.skew(frames, axis=1))
+        means = np.mean(frames, axis=1)
+        stds = np.std(frames, axis=1)
+        skews = np.abs(scipy.stats.skew(frames, axis=1))
 
     if args.skewness_ul is None:
         args.skewness_ul = np.inf
-    skewed_ind, = np.where(skews > args.skewness_ul)
+    skewed_ind = np.where(skews > args.skewness_ul)[0]
     if len(skewed_ind):
         if args.median_when_skewed:
             means[skewed_ind] = np.median(frames[skewed_ind], axis=1)
@@ -140,7 +124,7 @@ def main():
     if args.hist_dir is not None:
         means = tuple(map(float, means))
         stds = tuple(map(float, stds))
-        plot_hists(root, means, stds, 10, args.hist_dir)
+        plot_hists(args.root, means, stds, 10, args.hist_dir)
 
 if __name__ == '__main__':
     main()
