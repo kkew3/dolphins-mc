@@ -23,6 +23,10 @@ line_profiler
 unittest2
 ipdb
 
+# for visualization
+tensorboard==1.7.0
+tensorboardX
+
 # for compatible with the original PredNet (Keras) project
 theano==0.9.0
 tensorflow==1.2.1

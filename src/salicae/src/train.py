@@ -1,13 +1,15 @@
-import ipdb
+import os
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Sampler
 import torchvision.transforms as trans
 from typing import Callable, Tuple
-from functools import partial
+import tensorboardX
 
 import salicae
+import trainlib
 
 
 class MovingWindowBatchSampler(Sampler):
@@ -197,7 +199,7 @@ def reduce_moving_window(mw, frames, reducef, cpol='last'):
     return center_frames, reduced_frames
 
 
-def train(net, dataset, device, batch_size, lasso_strength):
+def train(net, dataset, device, batch_size, lasso_strength, logwriter, savedir):
     """
     Train the saliency autoencoder.
 
@@ -211,18 +213,20 @@ def train(net, dataset, device, batch_size, lasso_strength):
     :type batch_size: int
     :param lasso_strength: the Lasso regularization strength on saliency
     :type lasso_strength: float
-    :return: the losses
-    :rtype: List[float]
+    :param logwriter: the TensorboardX summary writer to write log
+    :type logwriter: tensorboardX.SummaryWriter
+    :param savedir: the directory under which to store model states
+    :type savedir: str
     """
     net = net.to(device)
+    checkpoint_saver = trainlib.CheckpointSaver(net, 10, savedir)
     optimizer = optim.Adam(net.parameters())
     mw = MovingWindowBatchSampler(dataset, width=30, drop_margin=True)
     sam = BatchMovingWindowBatchSampler(mw, batch_size=batch_size, drop_last=True)
     dl = DataLoader(dataset, num_workers=4, batch_sampler=sam)
     mse = nn.MSELoss()
-    losses = []
-    ipdb.set_trace()
-    for frames in dl:
+
+    for bid, frames in enumerate(dl):
         inputs, bgs = reduce_moving_window(mw, frames, lambda x: torch.median(x, dim=0, keepdim=True)[0])
         inputs, bgs = inputs.to(device), bgs.to(device)
         saliencies = net(inputs)
@@ -235,5 +239,7 @@ def train(net, dataset, device, batch_size, lasso_strength):
         loss.backward()
         optimizer.step()
 
-        losses.append(loss.detach().item())
-    return losses
+        logwriter.add_scalar('reconstr_loss', l1.detach().item(), bid)
+        logwriter.add_scalar('lasso_loss', l2.detach().item(), bid)
+        logwriter.add_scalar('loss', loss.detach().item())
+        checkpoint_saver(bid)
