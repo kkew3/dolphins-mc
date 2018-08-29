@@ -55,3 +55,6 @@ src/prednet_ref1_pytorch/
 
 # profile result
 **/profile/
+
+# logs
+lib/.vmdata.log
