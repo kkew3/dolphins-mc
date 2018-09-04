@@ -64,6 +64,26 @@ class GaussianBlur(object):
         return filters.gaussian_filter(img, (self.std, self.std, 0.0),
                                        truncate=self.tr_std)
 
+class MedianBlur(object):
+    """
+    Applicable only to Numpy arrays; thus it should be inserted before
+    ``trans.ToTensor()``.
+    """
+    def __init__(self, width=5):
+        """
+        :param width: the width of the sliding window.
+        :type width: int
+        """
+        self.width = max(1, width)
+
+    def __call__(self, img):
+        """
+        :param img: numpy array of dimension HWC
+        :return: blurred image
+        """
+        return filters.median_filter(img, (self.width, self.width, 1))
+
+
 def hwc2chw(tensor):
     """
     Transpose a numpy array from HWC to CHW.
