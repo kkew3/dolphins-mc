@@ -28,6 +28,7 @@ test-res/
 *.tgz
 *.zip
 *.h5
+*.npz
 
 # (large) media files
 *.avi
