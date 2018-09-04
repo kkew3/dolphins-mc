@@ -4,6 +4,7 @@ Common training utilities
 
 import os
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -57,3 +58,36 @@ class CheckpointSaver(object):
             tofile = os.path.join(self.savedir, self.cp_tmpl.format(batch_id))
             with open(tofile, 'wb') as outfile:
                 torch.save(self.net.state_dict(), outfile)
+
+
+class StatSaver(object):
+    """
+    Save (scalar) statistics periodically as npz file.
+    """
+
+    def __init__(self, freq, statdir, filename_tmpl='stats_{}.npz'):
+        freq = max(1, int(freq))
+        os.makedirs(statdir)
+        try:
+            _teststr = filename_tmpl.format(0)
+            if _teststr == filename_tmpl:
+                raise ValueError()
+        except:
+            raise ValueError('Invalid `filename_tmpl`: {}'
+                             .format(filename_tmpl))
+        self.freq = freq
+        self.statdir = statdir
+        self.fn_tmpl = filename_tmpl
+
+    def __call__(self, batch_id, **stat_dict):
+        """
+        Save statistics, which are wrapped into numpy arrays, as needed.
+
+        :param batch_id: current batch/itertion number
+        :type batch_id: int
+        :param stat_dict: dict of list of floats, i.e. the statistics
+        """
+        if batch_id % self.freq == 0:
+            tofile = os.path.join(self.statdir, self.fn_tmpl.format(batch_id))
+            _stat_dict = {k: np.array(stat_dict[k]) for k in stat_dict}
+            np.savez(tofile, **_stat_dict)
