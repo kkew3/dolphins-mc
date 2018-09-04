@@ -7,26 +7,27 @@ from torch.utils.data import DataLoader, Sampler
 import torchvision.transforms as trans
 from typing import Callable, Tuple
 import tensorboardX
+from ddlogger import ddlogger
 
 import salicae
 import trainlib
 
 
-class MovingWindowBatchSampler(Sampler):
+class SlidingWindowBatchSampler(Sampler):
     """
-    Batch sampler that yields a sequential moving window of indices.
+    Batch sampler that yields a sequential sliding window of indices.
 
-    >>> list(MovingWindowBatchSampler(range(5), 3))
+    >>> list(SlidingWindowBatchSampler(range(5), 3))
     [[0, 1, 2], [1, 2, 3], [2, 3, 4]]
-    >>> list(MovingWindowBatchSampler(range(5), 2))
+    >>> list(SlidingWindowBatchSampler(range(5), 2))
     [[0, 1], [1, 2], [2, 3], [3, 4]]
-    >>> list(MovingWindowBatchSampler(range(5), 3, drop_margin=False))
+    >>> list(SlidingWindowBatchSampler(range(5), 3, drop_margin=False))
     [[0, 1], [0, 1, 2], [1, 2, 3], [2, 3, 4], [3, 4]]
-    >>> list(MovingWindowBatchSampler(range(5), 3, drop_margin=False, left_biased=False))
+    >>> list(SlidingWindowBatchSampler(range(5), 3, drop_margin=False, left_biased=False))
     [[0, 1], [0, 1, 2], [1, 2, 3], [2, 3, 4], [3, 4]]
-    >>> list(MovingWindowBatchSampler(range(5), 2, drop_margin=False))
+    >>> list(SlidingWindowBatchSampler(range(5), 2, drop_margin=False))
     [[0], [0, 1], [1, 2], [2, 3], [3, 4]]
-    >>> list(MovingWindowBatchSampler(range(5), 2, drop_margin=False, left_biased=False))
+    >>> list(SlidingWindowBatchSampler(range(5), 2, drop_margin=False, left_biased=False))
     [[0, 1], [1, 2], [2, 3], [3, 4], [4]]
     """
 
@@ -43,7 +44,7 @@ class MovingWindowBatchSampler(Sampler):
                :math:`\frac{w - 2}{2}` elements; make difference only if
                ``width`` is even and ``drop_margin`` is ``False``
         """
-        super(MovingWindowBatchSampler, self).__init__(data_source)
+        super(SlidingWindowBatchSampler, self).__init__(data_source)
         self.data_source = data_source
         self.width = max(1, width)
         self.N = len(self.data_source)
@@ -73,7 +74,7 @@ class MovingWindowBatchSampler(Sampler):
     def __setattr__(self, key, value):
         if hasattr(self, '__setattr_lock') and self.__setattr_lock:
             raise ValueError('Attribute {} is readonly'.format(key))
-        super(MovingWindowBatchSampler, self).__setattr__(key, value)
+        super(SlidingWindowBatchSampler, self).__setattr__(key, value)
 
     def __iter__(self):
         for center_index in range(self.N):
@@ -97,63 +98,63 @@ class MovingWindowBatchSampler(Sampler):
 
 
 # noinspection PyMissingConstructor
-class BatchMovingWindowBatchSampler(Sampler):
+class BatchSlidingWindowBatchSampler(Sampler):
     """
     Unlike ``MovingWindowBatchSampler`` which samples at one time a moving
     window surrounding one frame, this sampler tries to samples a batch of
     center frames.
 
-    >>> list(BatchMovingWindowBatchSampler(MovingWindowBatchSampler(range(5), 3), 2))
+    >>> list(BatchSlidingWindowBatchSampler(SlidingWindowBatchSampler(range(5), 3), 2))
     [[0, 1, 2, 3]]
-    >>> len(BatchMovingWindowBatchSampler(MovingWindowBatchSampler(range(5), 3), 2))
+    >>> len(BatchSlidingWindowBatchSampler(SlidingWindowBatchSampler(range(5), 3), 2))
     1
-    >>> list(BatchMovingWindowBatchSampler(MovingWindowBatchSampler(range(5), 3), 2, drop_last=False))
+    >>> list(BatchSlidingWindowBatchSampler(SlidingWindowBatchSampler(range(5), 3), 2, drop_last=False))
     [[0, 1, 2, 3], [2, 3, 4]]
-    >>> len(BatchMovingWindowBatchSampler(MovingWindowBatchSampler(range(5), 3), 2, drop_last=False))
+    >>> len(BatchSlidingWindowBatchSampler(SlidingWindowBatchSampler(range(5), 3), 2, drop_last=False))
     2
-    >>> list(BatchMovingWindowBatchSampler(MovingWindowBatchSampler(range(5), 3), 3))
+    >>> list(BatchSlidingWindowBatchSampler(SlidingWindowBatchSampler(range(5), 3), 3))
     [[0, 1, 2, 3, 4]]
-    >>> len(BatchMovingWindowBatchSampler(MovingWindowBatchSampler(range(5), 3), 3))
+    >>> len(BatchSlidingWindowBatchSampler(SlidingWindowBatchSampler(range(5), 3), 3))
     1
-    >>> list(BatchMovingWindowBatchSampler(MovingWindowBatchSampler(range(5), 3), 4))
+    >>> list(BatchSlidingWindowBatchSampler(SlidingWindowBatchSampler(range(5), 3), 4))
     []
-    >>> len(BatchMovingWindowBatchSampler(MovingWindowBatchSampler(range(5), 3), 4))
+    >>> len(BatchSlidingWindowBatchSampler(SlidingWindowBatchSampler(range(5), 3), 4))
     0
-    >>> list(BatchMovingWindowBatchSampler(MovingWindowBatchSampler(range(5), 3), 4, drop_last=False))
+    >>> list(BatchSlidingWindowBatchSampler(SlidingWindowBatchSampler(range(5), 3), 4, drop_last=False))
     [[0, 1, 2, 3, 4]]
-    >>> len(BatchMovingWindowBatchSampler(MovingWindowBatchSampler(range(5), 3), 4, drop_last=False))
+    >>> len(BatchSlidingWindowBatchSampler(SlidingWindowBatchSampler(range(5), 3), 4, drop_last=False))
     1
     """
     def __init__(self, sampler, batch_size, drop_last=True):
         """
         :param sampler: a ``MovingWindowBatchSampler`` instance
-        :type sampler: MovingWindowBatchSampler
+        :type sampler: SlidingWindowBatchSampler
         :param batch_size: the batch size
         :type batch_size: int
         :param drop_last: True to drop last batch if it does not fulfill
                ``batch_size``
         :type drop_last: bool
         """
-        self.mwsampler = sampler
+        self.swsampler = sampler
         self.batch_size = batch_size
         self.drop_last = drop_last
 
     def __repr__(self):
-        to_show = ['mwsampler', 'batch_size', 'drop_last']
+        to_show = ['swsampler', 'batch_size', 'drop_last']
         s = '{}({})'.format(type(self).__name__,
                             ', '.join(map(lambda x: '{0}={{{0}}}'.format(x),
                                           to_show)).format(**self.__dict__))
         return s
 
     def __len__(self):
-        l = len(self.mwsampler) // self.batch_size
-        if not self.drop_last and len(self.mwsampler) % self.batch_size > 0:
+        l = len(self.swsampler) // self.batch_size
+        if not self.drop_last and len(self.swsampler) % self.batch_size > 0:
             l += 1
         return l
 
     def __iter__(self):
         bbatch = []
-        for batch in self.mwsampler:
+        for batch in self.swsampler:
             if len(bbatch) < self.batch_size:
                 bbatch.append(batch)
             else:
@@ -164,13 +165,13 @@ class BatchMovingWindowBatchSampler(Sampler):
             yield range(bbatch[0][0], bbatch[-1][-1] + 1)
         raise StopIteration()
 
-def reduce_moving_window(mw, frames, reducef, cpol='last'):
+def reduce_sliding_window(sw, frames, reducef, cpol='last'):
     """
-    Reduce a batch of frames (Tensor of dimension BCHW) in a moving window
+    Reduce a batch of frames (Tensor of dimension BCHW) in a sliding window
     pattern.
 
-    :param mw: the moving window sampler
-    :type mw: MovingWindowBatchSampler
+    :param sw: the sliding window sampler
+    :type sw: SlidingWindowBatchSampler
     :param frames: the batch of frames
     :type frames: torch.Tensor
     :param reducef: the reduce function that accepts a batch of frames and
@@ -185,12 +186,12 @@ def reduce_moving_window(mw, frames, reducef, cpol='last'):
              reduction results (arranged in BCHW manner)
     :rtype: Tuple[torch.Tensor, torch.Tensor]
     """
-    mw = MovingWindowBatchSampler(frames, mw.width, drop_margin=True)
+    sw = SlidingWindowBatchSampler(frames, sw.width, drop_margin=True)
     cind = {'first': 0, 'middle': (frames.shape[0] - 1) // 2, 'last': -1}[cpol]
 
     center_frames = []
     reduced_frames = []
-    for indices in mw:
+    for indices in sw:
         window = frames[indices]
         center_frames.append(frames[[cind]])
         reduced_frames.append(reducef(window))
@@ -198,8 +199,12 @@ def reduce_moving_window(mw, frames, reducef, cpol='last'):
     reduced_frames = torch.cat(reduced_frames, dim=0)
     return center_frames, reduced_frames
 
+def sw_median(frames):
+    return torch.median(frames, dim=0, keepdim=True)[0]
 
-def train(net, dataset, device, batch_size, lasso_strength, logwriter, savedir):
+
+def train(net, dataset, device, batch_size, lasso_strength,
+          statdir, savedir):
     """
     Train the saliency autoencoder.
 
@@ -213,33 +218,41 @@ def train(net, dataset, device, batch_size, lasso_strength, logwriter, savedir):
     :type batch_size: int
     :param lasso_strength: the Lasso regularization strength on saliency
     :type lasso_strength: float
-    :param logwriter: the TensorboardX summary writer to write log
-    :type logwriter: tensorboardX.SummaryWriter
+    :param statdir: directory under which to store scalar statistics
+    :type statdir: str
     :param savedir: the directory under which to store model states
     :type savedir: str
     """
     net = net.to(device)
     checkpoint_saver = trainlib.CheckpointSaver(net, 10, savedir)
+    stat_saver = trainlib.StatSaver(10, statdir)
     optimizer = optim.Adam(net.parameters())
-    mw = MovingWindowBatchSampler(dataset, width=30, drop_margin=True)
-    sam = BatchMovingWindowBatchSampler(mw, batch_size=batch_size, drop_last=True)
+    sw = SlidingWindowBatchSampler(dataset, width=30, drop_margin=True)
+    sam = BatchSlidingWindowBatchSampler(sw, batch_size=batch_size, drop_last=True)
     dl = DataLoader(dataset, num_workers=4, batch_sampler=sam)
-    mse = nn.MSELoss()
+    mse = nn.MSELoss(reduction='sum')
 
-    for bid, frames in enumerate(dl):
-        inputs, bgs = reduce_moving_window(mw, frames, lambda x: torch.median(x, dim=0, keepdim=True)[0])
-        inputs, bgs = inputs.to(device), bgs.to(device)
-        saliencies = net(inputs)
-        reconstr = saliencies * inputs + (1 - saliencies) * bgs
-        l1 = mse(reconstr, inputs)
-        l2 = torch.mean(torch.norm(saliencies.view(saliencies.shape[0], -1), 1, 1))
-        loss = l1 + lasso_strength * l2
+    l1_list = []
+    l2_list = []
+    sl_list = []
+    with ddlogger() as ddlog:
+        for bid, frames in enumerate(dl):
+            inputs, bgs = reduce_sliding_window(sw, frames, sw_median)
+            inputs, bgs = inputs.to(device), bgs.to(device)
+            saliencies = net(inputs)
+            reconstr = saliencies * inputs + (1 - saliencies) * bgs
+            l1 = mse(reconstr, inputs)
+            l2 = torch.mean(torch.norm(saliencies.view(saliencies.shape[0], -1), 1, 1))
+            loss = l1 + lasso_strength * l2
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        logwriter.add_scalar('reconstr_loss', l1.detach().item(), bid)
-        logwriter.add_scalar('lasso_loss', l2.detach().item(), bid)
-        logwriter.add_scalar('loss', loss.detach().item())
-        checkpoint_saver(bid)
+            ddlog.update()
+            l1_list.append(l1.detach().item())
+            l2_list.append(lasso_strength * l2.detach().item())
+            sl_list.append(loss.detach().item())
+            checkpoint_saver(bid)
+            stat_saver(bid, reconstr_loss=l1_list, lasso_loss=l2_list,
+                       loss=sl_list)
