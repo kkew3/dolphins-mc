@@ -116,8 +116,8 @@ def main():
             means[skewed_ind] = np.zeros(means[skewed_ind].shape)
         stds[skewed_ind] = np.ones(stds[skewed_ind].shape)
 
-    print ' '.join(map(str, means))
-    print ' '.join(map(str, stds))
+    print(' '.join(map(str, means)))
+    print(' '.join(map(str, stds)))
     if args.outfile is not None:
         np.savez(args.outfile, mean=means, std=stds)
 

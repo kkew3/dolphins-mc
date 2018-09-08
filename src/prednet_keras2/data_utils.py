@@ -56,6 +56,9 @@ class SequenceGenerator(Iterator):
             batch_y = batch_x
         return batch_x, batch_y
 
+    def __next__(self):
+        return self.next()
+
     def preprocess(self, X):
         return X.astype(np.float32) / 255
 

@@ -228,7 +228,7 @@ class PairedVideoDataset(Dataset):
 class InconsistentBlockSizeError(BaseException):
     def __init__(self, *args):
         """
-        >>> print InconsistentBlockSizeError(3, 2, 1)
+        >>> print(InconsistentBlockSizeError(3, 2, 1))
         'Invalid write attempt (history block size): 3, 2, 1'
         """
         BaseException.__init__(self, 'Invalid write attempt (history block '
@@ -309,7 +309,7 @@ class VideoDatasetWriter(object):
         else:
             with utils.poolcontext(num_workers) as pool:
                 checksum_lines = pool.map(compute_file_integrity, block_files)
-        return checksum_lines
+        return list(checksum_lines)
 
     def wrap_up(self, num_workers=4):
         """

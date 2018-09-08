@@ -81,7 +81,7 @@ def aligned_enum(max_count):
     >>> len(strings)
     14
     >>> ind_aligner = aligned_enum(len(strings))
-    >>> enum_strings = map(ind_aligner, enumerate(strings))
+    >>> enum_strings = list(map(ind_aligner, enumerate(strings)))
     >>> enum_strings[:3] == [('00', 'a'), ('01', 'b'), ('02', 'c')]
     True
     >>> enum_strings[-3:] == [('11', 'l'), ('12', 'm'), ('13', 'n')]

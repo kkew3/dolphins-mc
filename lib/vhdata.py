@@ -153,7 +153,7 @@ class VideoDataset(AbstractH5Dataset):
                 frame = self.transform(frame)
             return frame
         except IOError:
-            print >> sys.stderr, 'IOError raised when index={}'.format(index)
+            sys.stderr.write('IOError raised when index={}\n'.format(index))
             raise
 
     @property
@@ -291,10 +291,10 @@ class VideoSegmentDataset(AbstractH5Dataset):
                 return True
             return ds_name in segments
 
-        self.segment_data = ConcatDataset(map(_SegmentWrapper,
-                                              map(self.h5file.get,
-                                                  filter(in_segments,
-                                                         self.h5file))))
+        self.segment_data = ConcatDataset(list(map(_SegmentWrapper,
+                                                   map(self.h5file.get,
+                                                       filter(in_segments,
+                                                              self.h5file)))))
 
     def __len__(self):
         return len(self.segment_data)

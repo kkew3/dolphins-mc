@@ -39,6 +39,9 @@ import hickle
 import utils
 import ddlogger
 
+if sys.version_info.major == 3:
+    from functools import reduce
+
 
 BLOCKFILE_PAT = re.compile(r'^B\d+\.hkl$')
 HASH_ALGORITHM = 'sha1'
@@ -195,24 +198,24 @@ def main():
 
     # write frames
     for video_file in args.video_files:
-        print '>>> Dumping {}'.format(video_file)
+        print('>>> Dumping {}'.format(video_file))
         save_frames(video_file, args.dataset_root, args.block_size,
                     args.max_blocks, args.show_progress)
-        print '>>> Verifying write {}'.format(video_file)
+        print('>>> Verifying write {}'.format(video_file))
         failed_filenames[video_file] = verify_frames(video_file,
                                                      args.dataset_root)
     # check write failures
-    all_failed_filenames = reduce(operator.add, failed_filenames.values())
+    all_failed_filenames = list(reduce(operator.add, failed_filenames.values()))
     if len(all_failed_filenames):
-        print 'Failed dumps:'
+        print('Failed dumps:')
         for video_name in failed_filenames:
-            print '  {}:'.format(video_name)
+            print('  {}:'.format(video_name))
             for batch_name in failed_filenames[video_name]:
-                print '    {}'.format(batch_name)
+                print('    {}'.format(batch_name))
         sys.exit(1)
     # checksums
     for video_file in args.video_files:
-        print '>>> Hashing {}'.format(video_file)
+        print('>>> Hashing {}'.format(video_file))
         hash_results = compute_checksum(video_file, args.dataset_root)
         write_hashes(hash_results, video_file, args.dataset_root)
 

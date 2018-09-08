@@ -119,7 +119,7 @@ def parse_checksum_file(filename):
             batch_id = int(matched.group(1))
             checksum_lines.append((batch_id, expected_hex))
     checksum_lines.sort(key=lambda x: x[0])
-    expected_hexes = map(lambda x: x[1], checksum_lines)
+    expected_hexes = list(map(lambda x: x[1], checksum_lines))
     return expected_hexes
 
 
@@ -408,9 +408,9 @@ class VideoDataset(Dataset):
         try:
             rel_frame_id = frame_id - self.lens_cumsum[batch_id]
         except:
-            print 'batch_id:', batch_id
-            print 'cumsum:', self.lens_cumsum
-            print 'frame_id+1:', frame_id+1
+            print('batch_id: {}'.format(batch_id))
+            print('cumsum: {}'.format(self.lens_cumsum))
+            print('frame_id+1: {}'.format(frame_id + 1))
             raise
         return batch_id, rel_frame_id
 

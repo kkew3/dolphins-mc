@@ -32,11 +32,11 @@ def download_data():
         soup = BeautifulSoup(r.content)
         drive_list = soup.find_all("h3")
         drive_list = [d.text[:d.text.find(' ')] for d in drive_list]
-        print "Downloading set: " + c
+        print("Downloading set: {}".format(c))
         c_dir = base_dir + c + '/'
         if not os.path.exists(c_dir): os.mkdir(c_dir)
         for i, d in enumerate(drive_list):
-            print str(i+1) + '/' + str(len(drive_list)) + ": " + d
+            print('{}/{}: {}'.format(i + 1, len(drive_list), d))
             url = "http://kitti.is.tue.mpg.de/kitti/raw_data/" + d + "/" + d + "_sync.zip"
             urllib.urlretrieve(url, filename=c_dir + d + "_sync.zip")
 
@@ -47,7 +47,7 @@ def extract_data():
         c_dir = os.path.join(DATA_DIR, 'raw/', c + '/')
         _, _, zip_files = os.walk(c_dir).next()
         for f in zip_files:
-            print 'unpacking: ' + f
+            print('unpacking: {}'.format(f))
             spec_folder = f[:10] + '/' + f[:-4] + '/image_03/data*'
             command = 'unzip -qq ' + c_dir + f + ' ' + spec_folder + ' -d ' + c_dir + f[:-4]
             os.system(command)
@@ -74,7 +74,7 @@ def process_data():
             im_list += [im_dir + f for f in sorted(files)]
             source_list += [category + '-' + folder] * len(files)
 
-        print 'Creating ' + split + ' data: ' + str(len(im_list)) + ' images'
+        print('Creating {} data: {} images'.format(split, len(im_list)))
         X = np.zeros((len(im_list),) + desired_im_sz + (3,), np.uint8)
         for i, im_file in enumerate(im_list):
             im = imread(im_file)
