@@ -117,7 +117,8 @@ def memmapcontext(filename, dtype, shape, offset=0, mode='r'):
     :param shape: data shape
     :type shape: Tuple[int]
     :param offset: offset in units of number of elements
-    :param mode:
+    :param mode: the file open mode, choices: {'r', 'r+', 'w+', 'c'}; see
+           https://docs.scipy.org/doc/numpy/reference/generated/numpy.memmap.html#numpy.memmap
     :return:
     """
     mm = np.memmap(filename, mode=mode, shape=shape, dtype=dtype,
