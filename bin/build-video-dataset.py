@@ -101,7 +101,6 @@ def save_frames(video_file, dataset_root, block_size, max_blocks, dot_progress):
     batches_dir = os.path.join(dataset_root, video_name)
     n_frames = 0
     with utils.capcontext(video_file) as cap:
-        vit = utils.FrameIterator(cap, max_len=block_size)
         if not os.path.isdir(batches_dir):
             os.mkdir(batches_dir)
         dest_tmpl = 'B{}.hkl'
@@ -109,7 +108,7 @@ def save_frames(video_file, dataset_root, block_size, max_blocks, dot_progress):
         if dot_progress:
             dl = ddlogger.DotDotLogger()
         for block_id in cit:
-            frames = list(vit)
+            frames = list(utils.frameiter(cap, block_size))
             if not len(frames):
                 break
             n_frames += len(frames)
@@ -123,7 +122,6 @@ def save_frames(video_file, dataset_root, block_size, max_blocks, dot_progress):
             tofile = os.path.join(batches_dir, dest_tmpl.format(block_id))
             with open(tofile, 'w') as outfile:
                 hickle.dump(frames, outfile, compression='gzip')
-            vit.reset_counter()
             if dot_progress:
                 dl.update()
         if dot_progress:

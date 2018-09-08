@@ -27,42 +27,33 @@ def capcontext(video_file):
         cap.release()
 
 
-class FrameIterator(object):
+def frameiter(cap, n=None):
     """
-    Yield frames in numpy array of dimension [H x W x 3] where '3' stands
-    for RGB, 'H' the height and 'W' the width.
+    Yield frames in numpy array of shape (H, W, 3) where '3' stands for RGB, 'H'
+    the height and 'W' the width. The number of frames is at most ``n``. If
+    ``n`` is not specified, it's default to infinity.
+
+    :param cap: the video capture object
+    :type cap: cv2.VideoCapture
+    :param n: at most this number of frames are to be yielded; ``n`` should be
+           a nonnegative integer
+    :type n: int
+    :return: the frames in numpy array
     """
-
-    def __init__(self, cap, max_len=None):
-        """
-        :param cap: the video capture object
-        :type cap: cv2.VideoCapture
-        :param max_len: the maximum number of frames to read before stopped
-        """
-        if not cap.isOpened():
-            raise ValueError('cap not opened')
-        self.cap = cap
-        self.max_len = np.inf if max_len is None else max_len
-        self._read_count = 0
-
-    def reset_counter(self):
-        """
-        Reset the read counter, so that another `self.max_len` frames can be
-        yielded.
-        """
-        self._read_count = 0
-
-    def next(self):
-        if self._read_count < self.max_len:
-            s, f = self.cap.read()
-            if s:
-                self._read_count += 1
-                f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
-                return f
-        raise StopIteration()
-
-    def __iter__(self):
-        return self
+    if n is None:
+        n = np.inf
+    else:
+        n = max(0, int(n))
+    yielded_count = 0
+    while cap.isOpened():
+        if n == yielded_count:
+            break
+        s, f = cap.read()
+        if not s:
+            break
+        yielded_count += 1
+        f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+        yield f
 
 
 @contextmanager

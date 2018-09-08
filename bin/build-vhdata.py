@@ -47,15 +47,13 @@ def save_frames(video_file, dataset_root, block_size, max_blocks):
         with vhdata.VideoDatasetWriter(dataset_root, shape,
                                        dimension='NCHW') as writer:
             with ddlogger.ddlogger() as dl:
-                vit = utils.FrameIterator(cap, max_len=block_size)
-                for bid in range(max_blocks) if max_blocks else count():
-                    frames = list(vit)  # frames of dimension HWC
+                for _ in range(max_blocks) if max_blocks else count():
+                    frames = list(utils.frameiter(cap, block_size))  # frames of dimension HWC
                     if not frames:
                         break
                     frames = np.stack(frames)  # of dimension NHWC
                     frames = np.transpose(frames, (0, 3, 1, 2))  # NCHW
                     writer.write_batch(frames)
-                    vit.reset_counter()
                     dl.update()
 
 def main():

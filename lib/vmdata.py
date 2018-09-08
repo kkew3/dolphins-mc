@@ -465,8 +465,7 @@ def create_vdset(video_file, root, batch_size=1000, max_batches=None):
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         resolution = height, width
 
-        vit = utils.FrameIterator(cap, max_len=batch_size)
-        frames = list(vit)
+        frames = list(utils.frameiter(cap, batch_size))
         while frames:
             lens.append(len(frames))
             frames = np.concatenate(frames, axis=0)
@@ -492,8 +491,7 @@ def create_vdset(video_file, root, batch_size=1000, max_batches=None):
             # reset frame iterator and prepare for next round, if any
             if max_batches is not None and len(lens) == max_batches:
                 break
-            vit.reset_counter()
-            frames = list(vit)
+            frames = list(utils.frameiter(cap, batch_size))
 
     if max_batches is not None:
         assert len(lens) == max_batches, 'len(lens) ({}) != max_batches ({})'\
