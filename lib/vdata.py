@@ -62,7 +62,7 @@ def compute_file_integrity(filename):
     :return: the checksum line, which is a tuple of form
              ``(base_filename, expected_hex)``
     """
-    hashbuff = hashlib.new(HASH_ALGORITHM)
+    hashbuff = hashlib.new(DATASET_HASH_ALGORITHM)
     with open(filename, 'rb') as infile:
         for block in iter(lambda: infile.read(1024 * 1024), b''):
             hashbuff.update(block)
