@@ -9,6 +9,7 @@ test-res/
 .idea/
 
 # temporary files
+__pycache__
 *.tmp
 *.pyc
 *.sav
