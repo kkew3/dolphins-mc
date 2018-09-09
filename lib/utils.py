@@ -26,6 +26,19 @@ def capcontext(video_file):
     finally:
         cap.release()
 
+@contextmanager
+def videowritercontext(filename, fourcc, fps, wh):
+    """
+    :param filename: filename to write
+    :param fourcc: fourcc
+    :param fps: frame per second
+    :param wh: width and height
+    """
+    writer = cv2.VideoWriter(filename, fourcc, fps, wh)
+    try:
+        yield writer
+    finally:
+        writer.release()
 
 def frameiter(cap, n=None):
     """
