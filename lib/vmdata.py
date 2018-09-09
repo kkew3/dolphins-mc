@@ -376,9 +376,6 @@ class VideoDataset(Dataset):
             os.mkdir(self.root_tmp)
         logger.info('All decompressed batches removed')
 
-    def __del__(self):
-        self.release_mmap()
-
     def __enter__(self):
         return self
 
