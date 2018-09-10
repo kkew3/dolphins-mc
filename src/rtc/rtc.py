@@ -277,6 +277,14 @@ def compute_radio_classifier(positive_mean: np.ndarray, positive_std: np.ndarray
 
 
 class CompressiveTracker(object):
+    """
+    The compressive tracker.
+
+    By providing the bounding box on the first frame, it works by predicting
+    the bounding box on the following frames. The target object should not
+    deform much; otherwise the bounding box will drift.
+    """
+
     def __init__(self, frame: np.ndarray, object_box: Rect,
                  num_feature_rect_range: Tuple[int, int] = (2, 4),
                  num_features: int = 50,
