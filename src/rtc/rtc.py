@@ -4,7 +4,9 @@ from functools import partial
 import math
 
 import numpy as np
+import cv2
 from typing import Tuple, List, Optional, Sequence
+
 
 # the rectangular bound box
 # element types: (int, int, int, int)
@@ -95,15 +97,90 @@ def repeat(n: int, a: np.ndarray, ascol=True) -> np.ndarray:
     return m if ascol else m.transpose((1, 0) if len(a.shape) == 1 else (0, 2, 1))
 
 
+def sample_rect(img_shape: Tuple[int, int], object_box: Rect, inner_radius: float,
+                outer_radius: Optional[float] = None,
+                max_samples: Optional[int] = None) -> List[Rect]:
+    """
+    :param img_shape: shape (height, width) of the processing image
+    :param object_box: recent object position
+    :param inner_radius: inner sampling radius
+    :param outer_radius: outer sampling radius
+    :param max_samples: maximal number of sampled images
+    :return: the rectangular coordinates of the sampled images
+    """
+    rowsz = img_shape[0] - object_box.height - 1
+    colsz = img_shape[1] - object_box.width - 1
+    inradsq = inner_radius * inner_radius
+    if outer_radius is not None:
+        outradsq = outer_radius * outer_radius
+    minrow = max(0, int(object_box.y) - int(inner_radius))
+    maxrow = min(rowsz - 1, object_box.y + int(inner_radius))
+    mincol = max(0, object_box.x - int(inner_radius))
+    maxcol = min(colsz - 1, object_box.x + int(inner_radius))
+    if outer_radius is not None:
+        prob = max_samples * 1.0 / (maxrow - minrow + 1) / (maxcol - mincol + 1)
+
+    mesh = np.meshgrid(np.arange(minrow, maxrow + 1),
+                       np.arange(mincol, maxcol + 1))
+    mesh = np.stack(mesh, axis=2).reshape((-1, 2))
+    ulbox = np.array([object_box.y, object_box.x])
+    meshdiff = mesh - ulbox
+    distsqs = np.sum(np.square(meshdiff), axis=1)
+    if outer_radius is not None:
+        mask = (np.random.rand(distsqs.shape[0]) < prob) & \
+               (distsqs < inradsq) & (distsqs >= outradsq)
+    else:
+        mask = (distsqs < inradsq)
+    mesh = mesh[mask]
+
+    sample_boxes = []
+    for rc in mesh:
+        y, x = rc
+        sample_boxes.append(Rect(x, y, object_box.width, object_box.height))
+    return sample_boxes
+
+
+def compute_haar(object_box: Rect, num_features: int,
+                 num_feature_rect_range: Tuple[int, int]) -> HarrFeatures:
+    """
+    :param object_box: the object rectangle, with width no less than 3 and
+           height no less than 3
+    :param num_features: total number of features
+    :param num_feature_rect_range: (min, 1+max) of the number of feature
+           rectangles per frame
+    :return: the features and features weight
+    """
+    features = []
+    features_weight = []
+    nums_rect = np.random.randint(*num_feature_rect_range,
+                                  size=num_features)
+    for n in nums_rect:
+        rects = []
+        weights = []
+        for _ in range(n):
+            x = random.randint(0, object_box.width - 3 - 1)
+            y = random.randint(0, object_box.height - 3 - 1)
+            w = random.randint(1, object_box.width - x - 2)
+            h = random.randint(1, object_box.height - y - 2)
+            rects.append(Rect(x, y, w, h))
+            weight = 1.0 / math.sqrt(float(n))
+            if random.random() < 0.5:
+                weight = -weight
+            weights.append(weight)
+        features.append(rects)
+        features_weight.append(weights)
+    return HarrFeatures(features, features_weight)
+
+
 def compute_feature(img_integral: np.ndarray, harr: HarrFeatures,
                     sample_boxes: List[Rect]) -> np.ndarray:
     """
-    :param img_integral: the integrated image, of shape (height, width)
+    :param img_integral: the integrated image, of shape (height, width), with
+           ``dtype=np.float32``
     :param harr: the Harr features and weights
     :param sample_boxes: the sample boxes
     :return: computed sample features
     """
-    img_integral = img_integral.astype(np.float32)
     box_XYs = rects2np(sample_boxes)[[0, 1]]
     harrflens = list(map(len, harr.features))
     harrfmaxlen = max(harrflens)
@@ -126,19 +203,68 @@ def compute_feature(img_integral: np.ndarray, harr: HarrFeatures,
     return sample_features
 
 
+def update_gaussian_classifier(sample_features: np.array,
+                               mean: np.ndarray, std: np.ndarray,
+                               lr: float) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compute new mean and stdev of the Gaussian classifier.
+
+    :param sample_features: the sample features
+    :param mean: old mean
+    :param std: old stdev
+    :param lr: learning rate
+    :return: new mean and new stdev
+    """
+    sfmean = np.mean(sample_features, axis=1)
+    sfstd = np.std(sample_features, axis=1)
+    new_mean = lr * mean + (1 - lr) * sfmean
+    new_std = np.sqrt(lr * np.square(std) + (1 - lr) * np.square(sfstd)
+                      + lr * (1 - lr) * np.square(mean - sfmean))
+    return new_mean, new_std
+
+
+def compute_radio_classifier(positive_mean: np.ndarray, positive_std: np.ndarray,
+                             negative_mean: np.ndarray, negative_std: np.ndarray,
+                             sample_features: np.ndarray) -> Tuple[float, int]:
+    """
+    :param positive_mean:
+    :param positive_std:
+    :param negative_mean:
+    :param negative_std:
+    :param sample_features:
+    :return: ``radioMax`` and ``radioMaxIndex``
+    """
+    eps = 1e-30
+    radio_max = -np.inf
+    radio_max_index = 0
+    for j in range(sample_features.shape[1]):
+        ppos = np.exp(-np.square(sample_features[:, j] - positive_mean)
+                      / (2.0 * np.square(positive_std) + eps)) / (positive_std + eps)
+        pneg = np.exp(-np.square(sample_features[:, j] - negative_mean)
+                      / (2.0 * np.square(negative_std) + eps)) / (negative_std + eps)
+        sum_radio = np.sum(np.log(ppos + eps) - np.log(pneg + eps))
+        if radio_max < sum_radio:
+            radio_max = sum_radio
+            radio_max_index = j
+    return radio_max, radio_max_index
+
+
 class CompressiveTracker(object):
-    def __init__(self,
+    def __init__(self, frame: np.ndarray, object_box: Rect,
                  num_feature_rect_range: Tuple[int, int] = (2, 4),
                  num_features: int = 50,
                  radical_scope_positive: int = 4,
                  search_window_size: int = 25,
-                 learning_rate: float = 0.85) -> None:
+                 learning_rate: float = 0.85):
         """
+        :param frame: the first frame where the target object occurs
+        :param object_box: the box that indicate the object to track in ``frame``
         :param num_feature_rect_range: (min, max+1)
-        :param num_features:
-        :param radical_scope_positive:
-        :param search_window_size:
-        :param learning_rate:
+        :param num_features: number of all weaker classifiers, i.e. the feature
+               pool
+        :param radical_scope_positive: radical scope of positive samples
+        :param search_window_size: size of search window
+        :param learning_rate: the learning rate
         """
         self.num_feature_rect_range = num_feature_rect_range
         self.num_features = num_features
@@ -146,79 +272,72 @@ class CompressiveTracker(object):
         self.search_window_size = search_window_size
         self.lr = learning_rate
 
+        # the Harr features and weights
+        self._harr = None
+
+        # the Gaussian classifier
         self._pos_mean = np.zeros(self.num_features)
         self._neg_mean = np.zeros(self.num_features)
         self._pos_std = np.ones(self.num_features)
         self._neg_std = np.ones(self.num_features)
 
-    def compute_haar(self, object_box: Rect, num_features: Optional[int] = None) -> HarrFeatures:
-        """
-        :param object_box: the object rectangle, with width no less than 3 and
-               height no less than 3
-        :param num_features: total number of features, default to
-               ``self.num_features``
-        :return: the features and features weight
-        """
-        features = []
-        features_weight = []
-        if num_features is None:
-            num_features = self.num_features
-        nums_rect = np.random.randint(*self.num_feature_rect_range,
-                                      size=num_features)
-        for n in range(nums_rect):
-            rects = []
-            weights = []
-            for _ in range(n):
-                x = random.randint(0, object_box.width - 3 - 1)
-                y = random.randint(0, object_box.height - 3 - 1)
-                w = random.randint(1, object_box.width - x - 2)
-                h = random.randint(1, object_box.height - y - 2)
-                rects.append(Rect(x, y, w, h))
-                weight = 1.0 / math.sqrt(float(n))
-                if random.random() < 0.5:
-                    weight = -weight
-                weights.append(weight)
-            features.append(rects)
-            features_weight.append(weights)
-        return HarrFeatures(features, features_weight)
+        # sample boxes and features
+        self._sample_positive_box = None
+        self._sample_negative_box = None
+        self._sample_positive_features = None
+        self._sample_negative_features = None
 
-    def sample_rect(self, img: np.ndarray, object_box: Rect, inner_radius: float,
-                    outer_radius: Optional[float] = None,
-                    max_samples: Optional[int] = None) -> List[Rect]:
-        """
-        :param img: processing frame, of shape (height, width)
-        :param object_box: recent object position
-        :param inner_radius: inner sampling radius
-        :param outer_radius: outer sampling radius
-        :param max_samples: maximal number of sampled images
-        :return: the rectangular coordinates of the sampled images
-        """
-        rowsz = img.shape[0] - object_box.height - 1
-        colsz = img.shape[1] - object_box.width - 1
-        inradsq = inner_radius * inner_radius
-        if outer_radius is not None:
-            outradsq = outer_radius * outer_radius
-        minrow = max(0, int(object_box.y) - int(inner_radius))
-        maxrow = min(rowsz - 1, object_box.y + int(inner_radius))
-        mincol = max(0, object_box.x - int(inner_radius))
-        maxcol = min(colsz - 1, object_box.x + int(inner_radius))
-        prob = float(max_samples) / (maxrow - minrow + 1) / (maxcol - mincol + 1)
+        # detect box and feature
+        self._detect_box = None
+        self._detect_feature = None
 
-        mesh = np.meshgrid(np.arange(minrow, maxrow + 1),
-                           np.arange(mincol, maxcol + 1))
-        mesh = np.stack(mesh, axis=2).reshape((-1, 2))
-        ulbox = np.array([object_box.y, object_box.x])
-        meshdiff = mesh - ulbox
-        distsqs = np.dot(meshdiff, meshdiff)
-        if outer_radius is not None:
-            mask = (np.random.rand(distsqs.shape[0]) < prob) & \
-                   (distsqs < inradsq) & (distsqs >= outer_radius)
-        else:
-            mask = (distsqs < inner_radius)
-        mesh = mesh[mask]
+        self._process_first_frame(frame, object_box)
 
-        sample_boxes = []
-        for rc in mesh:
-            y, x = rc
-            sample_boxes.append(Rect(x, y, object_box.width, object_box.height))
-        return sample_boxes
+    def _process_first_frame(self, frame: np.ndarray, object_box: Rect):
+        self._harr = compute_haar(object_box, self.num_features, self.num_feature_rect_range)
+        self._sample_positive_box = sample_rect(frame.shape[:2], object_box,
+                                                1.0 * self.radical_scope_positive,
+                                                0.0, 1000000)
+        self._sample_negative_box = sample_rect(frame.shape[:2], object_box,
+                                                1.5 * self.search_window_size,
+                                                4.0 + self.radical_scope_positive, 100)
+        integral_frame = cv2.integral(frame).astype(np.float32)
+        self._sample_positive_features = compute_feature(integral_frame, self._harr,
+                                                         self._sample_positive_box)
+        self._sample_negative_features = compute_feature(integral_frame, self._harr,
+                                                         self._sample_negative_box)
+        self._pos_mean, self._pos_std = update_gaussian_classifier(self._sample_positive_features,
+                                                                   self._pos_mean, self._pos_std,
+                                                                   self.lr)
+        self._neg_mean, self._neg_std = update_gaussian_classifier(self._sample_negative_features,
+                                                                   self._neg_mean, self._neg_std,
+                                                                   self.lr)
+
+    def process_frame(self, frame: np.ndarray, object_box: Rect) -> Rect:
+        # predict
+        self._detect_box = sample_rect(frame.shape[:2], object_box, self.search_window_size)
+        integral_frame = cv2.integral(frame).astype(np.float32)
+        self._detect_feature = compute_feature(integral_frame, self._harr, self._detect_box)
+        radio_max, radio_max_index = compute_radio_classifier(self._pos_mean, self._pos_std,
+                                                              self._neg_mean, self._neg_std,
+                                                              self._detect_feature)
+        new_object_box = self._detect_box[radio_max_index]
+
+        # update
+        self._sample_positive_box = sample_rect(frame.shape[:2], new_object_box,
+                                                1.0 * self.radical_scope_positive,
+                                                0.0, 1000000)
+        self._sample_negative_box = sample_rect(frame.shape[:2], new_object_box,
+                                                1.5 * self.search_window_size,
+                                                4.0 + self.radical_scope_positive, 100)
+        self._sample_positive_features = compute_feature(integral_frame, self._harr,
+                                                         self._sample_positive_box)
+        self._sample_negative_features = compute_feature(integral_frame, self._harr,
+                                                         self._sample_negative_box)
+        self._pos_mean, self._pos_std = update_gaussian_classifier(self._sample_positive_features,
+                                                                   self._pos_mean, self._pos_std,
+                                                                   self.lr)
+        self._neg_mean, self._neg_std = update_gaussian_classifier(self._sample_negative_features,
+                                                                   self._neg_mean, self._neg_std,
+                                                                   self.lr)
+        return new_object_box
