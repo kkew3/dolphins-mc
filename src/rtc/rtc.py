@@ -1,3 +1,30 @@
+"""
+This module aims to reproduce result of Real-Time Compressive tracker
+(http://www4.comp.polyu.edu.hk/~cslzhang/CT/CT.htm). BibTeX entry::
+
+    .. code-block::
+
+        @inproceedings{Zhang:2012:RCT:2403072.2403137,
+            address = {Berlin, Heidelberg},
+            annote = {Used in "Dolphin recogntion and tracking"},
+            author = {Zhang, Kaihua and Zhang, Lei and Yang, Ming-Hsuan},
+            booktitle = {Proceedings of the 12th European Conference on Computer Vision - Volume Part III},
+            doi = {10.1007/978-3-642-33712-3_62},
+            file = {:home/kw/.local/share/data/Mendeley Ltd./Mendeley Desktop/Downloaded/Zhang, Zhang, Yang - 2012 - Real-time Compressive Tracking.pdf:pdf},
+            isbn = {978-3-642-33711-6},
+            pages = {864--877},
+            publisher = {Springer-Verlag},
+            series = {ECCV'12},
+            title = {{Real-time Compressive Tracking}},
+            url = {http://dx.doi.org/10.1007/978-3-642-33712-3{\_}62},
+            year = {2012}
+        }
+
+The authors kindly released Matlab and C++ implementation. However, it's uneasy
+to install and run either one. Therefore I ported the C++ implementation to
+python3.
+"""
+
 from collections import namedtuple
 import random
 from functools import partial
