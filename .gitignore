@@ -31,6 +31,7 @@ __pycache__
 *.zip
 *.h5
 *.npz
+*.npy
 
 # (large) media files
 *.avi
