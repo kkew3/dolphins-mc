@@ -7,6 +7,7 @@ import re
 import sys
 
 from PIL import Image, ImageDraw
+import cv2
 
 description = '''
 Mark pixel with a red cross on an image IMG.
@@ -86,10 +87,9 @@ def draw_bbox(ul: np.ndarray, br: np.ndarray, img: Image) -> Image:
     :rtype: PIL.Image
     """
     xy = [tuple(ul), tuple(br + np.ones_like(br))]
-    img = img.copy()
-    draw = ImageDraw.Draw(img)
-    draw.rectangle(xy, fill='red')
-    del draw
+    img = np.asarray(img.copy())
+    cv2.rectangle(img, xy[0], xy[1], (255, 0, 0), 2)
+    img = Image.fromarray(img)
     return img
 
 args = make_parser().parse_args()
@@ -323,8 +323,8 @@ class CmdApp(cmd.Cmd):
         coordinates, they will be overwritten.
 
         Usage: load FILE
-        Example 1 (load from "out.npy"): w out.npy
-        Example 2 (load from "filename with space.npy"): w filename with space.npy
+        Example 1 (load from "out.npy"): load out.npy
+        Example 2 (load from "filename with space.npy"): load filename with space.npy
         """
         try:
             coordinates = np.load(line)
@@ -333,6 +333,27 @@ class CmdApp(cmd.Cmd):
             return
 
         self.recorded_coordinates = list(coordinates)
+        if not self.quiet:
+            self.print_recorded_coordinates()
+
+    def do_bload(self, line):
+        """
+        Load npy file written by `boxwrite' as recorded coordinates. If there're
+        already recorded coordinates, they will be overwritten.
+
+        Usage: bload FILE
+        Example 1 (load from "out.npy"): bload out.npy
+        Example 2 (load from "filename with space.npy"): bload filename with space.npy
+        """
+        try:
+            coordinates = np.load(line)
+        except BaseException as e:
+            print('***', e)
+            return
+
+        xy, wh = list(coordinates)
+        xy2 = xy + wh
+        self.recorded_coordinates = [xy, xy2]
         if not self.quiet:
             self.print_recorded_coordinates()
 
