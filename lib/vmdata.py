@@ -265,6 +265,7 @@ class VideoDataset(Dataset):
 
         max_mmap = max(1, max_mmap)
         self.mmap_cache = LRUCache(maxsize=max_mmap)
+        self.gz_cache = LRUCache(maxsize=max(max_mmap, max_gzcache))
         self.max_gzcache = max(max_mmap, max_gzcache)
 
         # fine granularity lock for each data batch
@@ -330,6 +331,9 @@ class VideoDataset(Dataset):
                     self.validated_batches[batch_id] = True
                     logger.info('File integrity check completed for batch {}'.format(batch_id))
 
+                # till here file "batchf" has been available
+                self.gz_cache[batchf] = True
+
                 shape = (self.metainfo['lens'][batch_id],) + self.frame_shape
                 logger.debug('keys before mmap cache adjustment: {}'.format(list(self.mmap_cache.keys())))
                 self.mmap_cache[batch_id] = np.memmap(str(batchf), mode='r',
@@ -349,10 +353,14 @@ class VideoDataset(Dataset):
             if matched:
                 batch_id = int(matched.group(1))
                 with self.access_locks[batch_id]:
-                    if batch_id not in self.mmap_cache and \
+                    batchf = os.path.join(self.root_tmp, filename)
+                    # Since len(self.gz_cache) >= len(self.mmap_cahce) and they
+                    # are updated together, the latter must be a subset of the
+                    # former.
+                    if batchf not in self.gz_cache and \
                             len(os.listdir(self.root_tmp)) > self.max_gzcache:
                         try:
-                            os.remove(os.path.join(self.root_tmp, filename))
+                            os.remove(batchf)
                         except OSError:
                             # due to concurrency, the file may have already been
                             # removed; due to the lock, however, no process will
@@ -361,7 +369,7 @@ class VideoDataset(Dataset):
                             pass
                         else:
                             logger.info('Decompressed batch "{}" removed'
-                                        .format(os.path.join(self.root_tmp, filename)))
+                                        .format(batchf))
 
     def cleanup_all_mmapfiles(self):
         """
