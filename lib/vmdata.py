@@ -62,8 +62,9 @@ import cv2
 import numpy as np
 from cachetools import LRUCache
 from filelock import FileLock
+import torch
 from torch.utils.data import Dataset
-from typing import Iterable, Iterator, List, Tuple
+from typing import Iterable, Iterator, List, Tuple, Union, Sequence
 
 import utils
 
@@ -567,3 +568,44 @@ def prepare_dataset_root(cam_channel, video_index):
         raise ValueError('root "{}" is not an existing directory'
                          .format(root))
     return root
+
+
+class LabelledVideoDataset(Dataset):
+    """
+    The labelled dataset based on ``VideoDataset`` (the unlablled).
+    """
+
+    def __init__(self, labels, *args, **kwargs):
+        """
+        The parameter of __init__ is the same as that of
+        ``VideoDataset.__init__`` except for the additional positional argument
+        ``labels``. The dataset labels can be provided via:
+
+        - string containing filename: the i-th line of the file should be the
+          label of the i-th datum in the dataset
+        - an array-like object containing the labels: the type includes
+          ``list``, ``torch.Tensor``, ``np.ndarray``. The element type must be
+          a sort of integer (each takes at most 4 bytes).
+
+        The number of labels must be the same as the size of the dataset.
+
+        :param labels: the labels of the dataset
+
+        Other positional/keyword arguments, see ``help(VideoDataset.__init__)``.
+        """
+        vdset = VideoDataset(*args, **kwargs)
+        if isinstance(labels, str):
+            with open(labels) as infile:
+                labels = list(map(int, map(str.strip, infile)))
+        labels = np.array(labels, dtype=np.int32)
+        if len(vdset) != len(labels):
+            raise ValueError('len(labels) ({}) is different from len(dataset)'
+                             ' ({})'.format(len(labels), len(vdset)))
+        self.vdset = vdset
+        self.labels = labels
+
+    def __len__(self):
+        return len(self.vdset)
+
+    def __getitem__(self, item):
+        return self.vdset[item], self.labels[item]
