@@ -1,5 +1,22 @@
+import numpy as np
+
 import torch
 from torch.utils.data.sampler import Sampler
+from typing import List
+
+
+class DummySampler(Sampler):
+    """
+    For debug.
+    """
+    def __init__(self, *args, **kwargs):
+        self.indices = range(100)
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __iter__(self):
+        return iter(self.indices)
 
 
 class RandomSubsetSampler(Sampler):
@@ -27,12 +44,12 @@ class RandomSubsetSampler(Sampler):
         return iter(indices)
 
 
-class DummySampler(Sampler):
+class ListSampler(Sampler):
     """
-    For debug.
+    A wrapper over list to make it a ``Sampler``.
     """
-    def __init__(self, *args, **kwargs):
-        self.indices = range(100)
+    def __init__(self, indices: List[int]):
+        self.indices = indices
 
     def __len__(self):
         return len(self.indices)
