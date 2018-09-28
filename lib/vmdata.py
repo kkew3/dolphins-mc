@@ -68,16 +68,7 @@ from typing import Iterable, Iterator, List, Tuple, Union, Sequence
 
 import utils
 
-#############################################
-# logging setting
 _cd = os.path.dirname(os.path.realpath(__file__))
-# log to ./.vmdata.log
-logging.basicConfig(format='[%(levelname)s] [%(asctime)s] (%(name)s) %(message)s',
-                    datefmt='%Y-%m-%d %I:%M:%S %p',
-                    filename=os.path.join(_cd, '.vmdata.log'),
-                    level=logging.DEBUG)
-# End of logging setting
-#############################################
 
 
 HASH_ALGORITHM = 'sha1'
@@ -89,6 +80,7 @@ DEFAULT_DATASET_ROOTNAME_TMPL = 'CH{0:0>2}-{1[0]:0>2}_{1[1]:0>2}_{1[2]:0>2}'
 
 # npz file containing mean and std info of the dataset
 NORMALIZATION_INFO_FILE = 'nml-stat.npz'
+NORMALIZATION_INFO_FILE_BW = 'nml-stat_bw.npz'
 
 
 def parse_checksum_file(filename):
@@ -347,6 +339,10 @@ class VideoDataset(Dataset):
         self.cleanup_unused_mmapfiles()
         return frame
 
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self[i]
+
     def cleanup_unused_mmapfiles(self):
         logger = logging.getLogger('.'.join([type(self).__name__, 'cleanup_unused_mmapfiles']))
         for filename in os.listdir(self.root_tmp):
@@ -520,7 +516,7 @@ def create_vdset(video_file, root, batch_size=1000, max_batches=None):
         json.dump(metainfo, outfile)
 
 
-def get_normalization_stats(root):
+def get_normalization_stats(root: str, bw: bool=False):
     """
     Returns the normalization statistics (mean, std) in preprocessing step
     when loading the dataset. The normalization data presents in a ``npz``
@@ -534,6 +530,7 @@ def get_normalization_stats(root):
             normalize = trans.Normalize(*get_normalization_stats(root))
 
     :param root: the root directory of the video dataset
+    :param bw: load the B&W mean/std instead
     :raise IOError: if the ``$NORMALIZATION_INFO_FILE`` is not found under
            ``root``, which may due to spelling error in ``root`` or the file
            is absent as a matter of fact. For the latter case, compute the
@@ -543,7 +540,8 @@ def get_normalization_stats(root):
     :return: the mean and std
     :rtype: Tuple[Tuple[float], Tuple[float]]
     """
-    data = np.load(os.path.join(root, NORMALIZATION_INFO_FILE))
+    filename = NORMALIZATION_INFO_FILE_BW if bw else NORMALIZATION_INFO_FILE
+    data = np.load(os.path.join(root, filename))
     mean = tuple(map(float, data['mean']))
     std = tuple(map(float, data['std']))
     return mean, std
@@ -575,7 +573,7 @@ class LabelledVideoDataset(Dataset):
     The labelled dataset based on ``VideoDataset`` (the unlablled).
     """
 
-    def __init__(self, labels, *args, **kwargs):
+    def __init__(self, labels, vdset: VideoDataset):
         """
         The parameter of __init__ is the same as that of
         ``VideoDataset.__init__`` except for the additional positional argument
@@ -590,14 +588,12 @@ class LabelledVideoDataset(Dataset):
         The number of labels must be the same as the size of the dataset.
 
         :param labels: the labels of the dataset
-
-        Other positional/keyword arguments, see ``help(VideoDataset.__init__)``.
+        :param vdset: the video dataset to label
         """
-        vdset = VideoDataset(*args, **kwargs)
         if isinstance(labels, str):
             with open(labels) as infile:
                 labels = list(map(int, map(str.strip, infile)))
-        labels = np.array(labels, dtype=np.int32)
+        labels = np.array(labels, dtype=np.int64)
         if len(vdset) != len(labels):
             raise ValueError('len(labels) ({}) is different from len(dataset)'
                              ' ({})'.format(len(labels), len(vdset)))
