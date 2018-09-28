@@ -5,9 +5,9 @@ Global library for other dedicated library or project/branch-specific codes.
 import os
 import sys
 from contextlib import contextmanager
-from typing import Iterator
 import multiprocessing
 
+from typing import Optional, Callable, Sequence, Any, Iterable
 import numpy as np
 import cv2
 
@@ -40,17 +40,16 @@ def videowritercontext(filename, fourcc, fps, wh):
     finally:
         writer.release()
 
-def frameiter(cap, n=None):
+def frameiter(cap: cv2.VideoCapture, n: Optional[int]=None, rgb: bool=True):
     """
     Yield frames in numpy array of shape (H, W, 3) where '3' stands for RGB, 'H'
     the height and 'W' the width. The number of frames is at most ``n``. If
     ``n`` is not specified, it's default to infinity.
 
     :param cap: the video capture object
-    :type cap: cv2.VideoCapture
     :param n: at most this number of frames are to be yielded; ``n`` should be
            a nonnegative integer
-    :type n: int
+    :param numpy: True to returns array with color channel RGB, otherwise BGR
     :return: the frames in numpy array
     """
     if n is None:
@@ -65,7 +64,8 @@ def frameiter(cap, n=None):
         if not s:
             break
         yielded_count += 1
-        f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+        if rgb:
+            f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
         yield f
 
 
@@ -140,3 +140,63 @@ def memmapcontext(filename, dtype, shape, offset=0, mode='r'):
         yield mm
     finally:
         del mm
+
+
+def fcompose(funcs: Sequence[Callable]) -> Callable:
+    """
+    Compose any number of callable objects into one callable object, which is
+    the functional composition of all the objects from left to right. Each
+    callable object should expect one single positional argument.
+
+    >>> def sum(values):
+    ...     x, y = values
+    ...     return x + y
+    >>> def negate(value):
+    ...     return -value
+    >>> fcompose([sum, negate])((1, 2))
+    -3
+
+    :return: the functional composition
+    """
+    def _wrapped(arg):
+        for f in funcs:
+            arg = f(arg)
+        return arg
+    return _wrapped
+
+
+def fstarcompose(funcs) -> Callable:
+    """
+    Same as ``fcompose``, except for doing star operation at the invocation of
+    each callable objects.
+
+    >>> def orig_sum(x, y):
+    ...     return x, x + y
+    >>> def product(x, y):
+    ...     return x * y
+    >>> fstarcompose([orig_sum, product])(2, 3)
+    10
+
+    :return: the functional composition
+    """
+    def _wrapped(*args):
+        for f in funcs:
+            args = f(*args)
+        return args
+    return _wrapped
+
+
+def inf_powerof(num: int, pow: int) -> int:
+    """
+    Get the nearest number to ``num`` that is smaller than ``num`` and that is
+    a power of ``pow``. "inf" stands for "infimum".
+    """
+    return num - num % pow
+
+
+def browadcast_value2list(value: Any, iterable: Iterable) -> Iterable:
+    """
+    >>> list(browadcast_value2list(4, [2, 3, 5]))
+    [(4, 2), (4, 3), (4, 5)]
+    """
+    return map(lambda x: (value, x), iterable)
