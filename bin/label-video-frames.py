@@ -1,12 +1,8 @@
 #!/usr/bin/env python
 
 import argparse
-import readline
-import cmd
 
-import cv2
 import matplotlib.pyplot as plt
-import numpy as np
 
 import vmdata
 
