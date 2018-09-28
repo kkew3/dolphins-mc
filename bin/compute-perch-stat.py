@@ -29,7 +29,7 @@ def make_parser():
     parser.add_argument('root',
                         help='the root directory of the video dataset')
     parser.add_argument('-n', type=int, default=50,
-                        help='number of random samples, default 10.0')
+                        help='number of random samples, default %(default)s')
     parser.add_argument('-o', dest='outfile',
                         help='result file to write, which will be an npz file '
                              'with fields "mean" and "std"')
