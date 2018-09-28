@@ -8,20 +8,17 @@ class DeNormalize(object):
     """
     The inverse transformation of ``tochvision.transforms.Normalize``. As in
     ``tochvision.transforms.Normalize``, this operation modifies input tensor
-    in place.
+    in place. The input tensor should be of shape (C, H, W), namely,
+    (num_channels, height, width).
 
     :param mean: the mean used in ``Normalize``
     :param std: the std used in ``Normalize``
     """
     def __init__(self, mean, std):
-        self.mean = torch.tensor(mean, dtype=torch.float).view(1, -1, 1, 1)
-        self.std = torch.tensor(std, dtype=torch.float).view(1, -1, 1, 1)
+        self.mean = torch.tensor(mean, dtype=torch.float).view(-1, 1, 1)
+        self.std = torch.tensor(std, dtype=torch.float).view(-1, 1, 1)
 
     def __call__(self, tensor):
-        """
-        :param tensor: tensor of dimension [B x C x H x W] where B is the
-               batch size and C the number of input channels
-        """
         tensor.mul_(self.std)
         tensor.add_(self.mean)
         return tensor
