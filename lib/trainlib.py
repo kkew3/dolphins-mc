@@ -12,8 +12,7 @@ class CheckpointSaver(object):
     """
     Save checkpoint periodically.
     """
-    def __init__(self, net, freq, savedir,
-                 checkpoint_tmpl='checkpoint_{}.pth'):
+    def __init__(self, net, savedir, freq=1, checkpoint_tmpl='checkpoint_{}.pth'):
         """
         :param net: the network to save states; the network should already been
                in the target device
@@ -33,7 +32,7 @@ class CheckpointSaver(object):
             raise TypeError('Expected torch.nn.Module of `net` but got: {}'
                             .format(type(net)))
         freq = max(1, int(freq))
-        os.makedirs(savedir)
+        os.makedirs(savedir, exist_ok=True)
         try:
             _teststr = checkpoint_tmpl.format(0)
             if _teststr == checkpoint_tmpl:
@@ -65,9 +64,9 @@ class StatSaver(object):
     Save (scalar) statistics periodically as npz file.
     """
 
-    def __init__(self, freq, statdir, filename_tmpl='stats_{}.npz'):
+    def __init__(self, statdir, freq=1, filename_tmpl='stats_{}.npz'):
         freq = max(1, int(freq))
-        os.makedirs(statdir)
+        os.makedirs(statdir, exist_ok=True)
         try:
             _teststr = filename_tmpl.format(0)
             if _teststr == filename_tmpl:
