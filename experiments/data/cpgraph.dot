@@ -1,0 +1,63 @@
+digraph InterestingRegionComputationGraph {
+	// units of time step 0
+	grid0 [shape=square, label=GRID];
+	lstm0 [shape=square, label=LSTM];
+	affregr0 [shape=square, label=AFFINEregr];
+	affdesc0 [shape=square, label=AFFINEdesc];
+	// units of time step 1
+	grid1 [shape=square, label=GRID];
+	lstm1 [shape=square, label=LSTM];
+	affregr1 [shape=square, label=AFFINEregr];
+	affdesc1 [shape=square, label=AFFINEdesc];
+
+	// constants
+	f [label=frame, shape=plain];
+	g [label=gview, shape=plain];
+
+	// variables
+	k [label=kernelbank, style=filled, fillcolor=yellow];
+	tlstm [label=<&theta;<SUB>lstm</SUB>>, style=filled, fillcolor=yellow];
+	taffregr [label=<&theta;<SUB>affine-regr</SUB>>, style=filled, fillcolor=yellow];
+	taffdesc [label=<&theta;<SUB>affine-desc</SUB>>, style=filled, fillcolor=yellow];
+
+	// other nodes
+	o0 [label=<offset<SUB>0</SUB>>, shape=plain];
+	o1 [label=<offset<SUB>1</SUB>>, shape=plain];
+	l0 [label=<lview<SUB>0</SUB>>, shape=plain];
+	l1 [label=<lview<SUB>1</SUB>>, shape=plain];
+	h0 [label=<hidden<SUB>0</SUB>>, shape=plain];
+	h1 [label=<hidden<SUB>1</SUB>>, shape=plain];
+	h1p [label=<hidden<SUB>1</SUB><SUP>&#39;</SUP>>, shape=plain];
+	h2p [label=<hidden<SUB>2</SUB><SUP>&#39;</SUP>>, shape=plain];
+	o1 [label=<offset<SUB>1</SUB>>, shape=plain];
+	o2 [label=<offset<SUB>2</SUB>>, shape=plain];
+	d1 [label=<descri<SUB>1</SUB>>, shape=plain];
+	d2 [label=<descri<SUB>2</SUB>>, shape=plain];
+	s1 [label=<sali<SUB>1</SUB>>, shape=plain];
+	s2 [label=<sali<SUB>2</SUB>>, shape=plain];
+	lo1 [label=loss1, shape=triangle, style=filled, fillcolor=cyan];
+	lo2 [label=loss2, shape=triangle, style=filled, fillcolor=cyan];
+
+	f -> g [label=features];
+
+	// time step 0 -> 1
+	{f, o0} -> grid0;
+	grid0 -> l0 [label=features];
+	{tlstm, l0, h0} -> lstm0 -> h1p;
+	{h1p, taffregr} -> affregr0 -> o1;
+	{h1p, taffdesc} -> affdesc0;
+	affdesc0 -> d1 [label=gumbel];
+	{k, d1} -> s1;
+	{o0, g, s1} -> lo1;
+
+	// time step 1 -> 2
+	h1p -> h1 [style=dotted];
+	{f, o1} -> grid1;
+	grid1 -> l1 [label=features];
+	{tlstm, l1, h1} -> lstm1 -> h2p;
+	{h2p, taffregr} -> affregr1 -> o2;
+	{h2p, taffdesc} -> affdesc1;
+	affdesc1 -> d2 [label=gumbel];
+	{k, d2} -> s2;
+	{o1, g, s2} -> lo2;
+}
