@@ -86,7 +86,7 @@ def train_pred9_f1to8(vdset: vmdata.VideoDataset,
                         alpha * moving_average + (1 - alpha) * loss123
                     cpsaver(progress)
                     stsaver(progress, **dict(zip(stat_names, stat_vals)))
-                logger.info(('[epoch{}/batch{}]'.format(epoch, j) +
+                logger.info(('[epoch{}/batch{}] '.format(epoch, j) +
                              ' '.join('{}={{:.2f}}'.format(n) for n in stat_names))
                             .format(*stat_vals))
 
