@@ -26,6 +26,7 @@ def capcontext(video_file):
     finally:
         cap.release()
 
+
 @contextmanager
 def videowritercontext(filename, fourcc, fps, wh):
     """
@@ -39,6 +40,7 @@ def videowritercontext(filename, fourcc, fps, wh):
         yield writer
     finally:
         writer.release()
+
 
 def frameiter(cap: cv2.VideoCapture, n: Optional[int]=None, rgb: bool=True):
     """
@@ -67,22 +69,6 @@ def frameiter(cap: cv2.VideoCapture, n: Optional[int]=None, rgb: bool=True):
         if rgb:
             f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
         yield f
-
-
-@contextmanager
-def poolcontext(*args, **kwargs):
-    """
-    Use ``multiprocessing.Pool`` as a context manager. All arguments are passed
-    directly to ``multiprocessing.Pool`` constructor. Usage:
-
-    >>> with poolcontext(processes=1) as pool:
-    ...     pass
-    """
-    pool = multiprocessing.Pool(*args, **kwargs)
-    try:
-        yield pool
-    finally:
-        pool.close()
 
 
 def aligned_enum(max_count):

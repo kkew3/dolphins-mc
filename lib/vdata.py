@@ -168,7 +168,7 @@ class VideoDataset(Dataset):
                     raise RuntimeError('Dataset corrupted')
         else:
             # fail fast multiprocessing is too difficult to implement ...
-            with utils.poolcontext(num_workers) as pool:
+            with multiprocessing.Pool(num_workers) as pool:
                 errnos = pool.map(check_file_integrity, checksums.items())
                 if DATASET_NOT_FOUND | DATASET_CORRUPTED in errnos:
                     raise RuntimeError('Dataset not found or corrupted')
@@ -307,7 +307,7 @@ class VideoDatasetWriter(object):
         if num_workers <= 1:
             checksum_lines = map(compute_file_integrity, block_files)
         else:
-            with utils.poolcontext(num_workers) as pool:
+            with multiprocessing.Pool(num_workers) as pool:
                 checksum_lines = pool.map(compute_file_integrity, block_files)
         return list(checksum_lines)
 
