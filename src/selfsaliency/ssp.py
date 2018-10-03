@@ -35,7 +35,7 @@ class STGumbelSoftmaxEstimator(nn.Module):
     def __init__(self, temperature: float=1.0, eps: float=1e-20):
         super().__init__()
 
-    def _sample(self, logits):
+    def _sample(self, logits, eps=1e-20):
         U = torch.rand_like(logits)
         return -torch.log(-torch.log(U + eps) + eps)
 
@@ -52,7 +52,7 @@ class STGumbelSoftmaxEstimator(nn.Module):
         return (y_hard - y).detach() + y
 
 
-class SaleincyPredictor(nn.Module):
+class SaliencyPredictor(nn.Module):
     def __init__(self, descriptor_size: int, in_channels: int,
                  kernel: Union[int, Tuple[int, int]]):
         """
@@ -72,7 +72,7 @@ class SaleincyPredictor(nn.Module):
         # initialize the Conv2d
         ...
 
-    def forward(self, )
+
 
 
 class SelfSaliencyPredictor(nn.Module):
