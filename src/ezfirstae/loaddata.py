@@ -7,7 +7,7 @@ from PIL import Image
 import torch
 from torch.utils.data import DataLoader, Sampler
 from torchvision import transforms as trans
-from typing import Union, Tuple, List
+from typing import Union, Tuple, List, Sequence
 
 import more_sampler
 import utils
@@ -74,28 +74,22 @@ def rearrange_temporal_batch(data_batch: torch.Tensor, T: int) -> torch.Tensor:
     return data_batch.detach()  # so that ``is_leaf`` is True
 
 
-def split_inputs_targets(temporal_data_batch: torch.Tensor,
-                         inputs_ind, targets_ind) -> Tuple[torch.Tensor, torch.Tensor]:
+def alternate_partition_dataset(indices: Sequence[int],
+                                ratios: Sequence[int],
+                                homo_period: int = 16,
+                                alternating_period: int = 10) -> List[List[np.ndarray]]:
     """
-    Split a termporal data batch of shape (B, C, T, H, W) into an input tensor
-    of shape (B, C, Ti, H, W) and a target tensor of shape (B, C, To, H, W).
+    Partition the indices of a dataset into several partitions (say, in order to
+    perform a train/test split). The partitions are arranged in an alternating
+    order. The incontiguous regions of indices assigned to the same partition
+    is denoted as belonging to the same class. Assume that we have three classes
+    C1, C2 and C3, then the partition of indices appears like this::
 
-    :param temporal_data_batch: the batch tensor to split
-    :param inputs_ind: the array-like indices along the temporal (T) axis to
-           assign to the input tensor
-    :param targets_ind: the array-like indices along the temporal (T) axis to
-           assign to the target tensor
-    :return: the input tensor and the target tensor
-    """
-    raise NotImplementedError()
+        .. code-block::
 
+            C1 | C2 | C3 | C1 | C2 | C3 | C1 | C2 | C3 | ...
 
-class TrainValidTestAlternatingSamplers(object):
-    """
-    Initializer of a trainset sampler (, a validation set sampler) and a testset
-    sampler from one data source.
-
-    Steps to sample:
+    Steps to partition:
 
         1. Remove a minimum trailing part of the data source (no actual removal)
            such that the length of the remaining part is a power of
@@ -113,113 +107,79 @@ class TrainValidTestAlternatingSamplers(object):
     ``alternating_period`` as 4 and ``homo_period`` as 2, assuming that the
     ``ratios`` is ``(5, 1)``, then 3 out of 4 segments in the 1st group will be
     sampled into trainset, and 1 out of 4 segments will end up into testset; for
-    the 2nd group, all two segments will be sampled to trainset. If not
-    ``shuffled`` is True, then the trainset will be ``[0,1,2,3,4,5,8,9,10,11]``
-    and the testset will be ``[6,7]``; otherwise, the assignment of each segment
-    will remain the same except that the order is randomized, e.g. trainset as
-    ``[2,3,10,11,8,9,0,1,4,5]``. Note that the order of frames in each segment
-    always remains intact.
+    the 2nd group, all two segments will be sampled to trainset.
 
-
-    How to get the samplers::
-
-        .. code-block::
-
-            # when `ratios` is a 2-tuple of integers
-            samplers = TrainValidTestAlternatingSamplers(data_source, ratios=(5, 1))
-            train_sampler = samplers.train_sampler
-            test_sampler = samplers.test_sampler
-
-            # when `ratios` is a 3-tuple of integers
-            samplers = TrainValidTestAlternatingSamplers(data_source, ratios=(9, 1, 2))
-            train_sampler = samplers.train_sampler
-            validation_sampler = samplers.validation_sampler
-            test_sampler = samplers.test_sampler
-
-
-    The division of trainset (, validation set) and testset happens on
-    instantiation. The sampling within each class of dataset happens every time
-    on ``__getattr__`` of corresponding sampler name.
+    :param indices: the indices to partition
+    :param ratios: sequence of integers, the size of each class will be
+           proportional to the fractions of these integers against the sum
+    :param homo_period: the maximum length of contiguous frames such that
+           they are sampled into the same class;
+           the quantity should be identical to the ``batch_size`` when
+           training
+    :param alternating_period: the minimum number of contiguous groupings
+           of frames as specified by ``homo_period`` such that at least one
+           of frame of which is sampled to every class
+    :return: K lists of arrays of indices such that the each array of indices in
+             the ith list is one contiguous partition of the ith class, where K
+             equals to the length of ``ratios``
     """
 
-    def __init__(self, data_source, homo_period: int = 16,
-                 alternating_period: int = 10,
-                 ratios: Union[Tuple[int, int, int], Tuple[int, int]] = (9, 1, 2),
-                 shuffled: bool=False):
-        """
-        :param data_source: the handle to the data source; note that the handle
-               itself won't be maintained in this sampler
-        :param homo_period: the maximum length of contiguous frames such that
-               they are sampled into the same class (train/validation/test);
-               the quantity should be identical to the ``batch_size`` when
-               training
-        :param alternating_period: the minimum number of contiguous groupings
-               of frames as specified by ``homo_period`` such that at least one
-               of frame of which is sampled to every class
-               (train/validation/test)
-        :param ratios: either a 2-tuple or a 3-tuple of integers; when 2-tuple,
-               the data source will be split to trainset and testset in ratio
-               specified by ``ratios``; when 3-tuple, it will be split to
-               trainset, validation set, and testset
-        :param shuffled: True to do random assignment at the fourth step (see
-               ``help(type(self))``); False to do sequential assignment
-        """
-        self.homo_period = homo_period
-        self.alternating_period = alternating_period
-        self.shuffled = shuffled
-        ratios = np.array(ratios).astype(np.float64)
-        self.ratios = ratios / ratios.sum()
+    ratios = np.array(ratios, dtype=np.float64)
+    ratios = ratios / ratios.sum()
 
-        disposable_indices = np.arange(utils.inf_powerof(len(data_source), self.homo_period))
-        segments = disposable_indices.reshape((-1, self.homo_period))
-        self._segindices_pc = self.do_sample(segments, self.ratios)
-        sampler_names = ['train_sampler', 'test_sampler']
-        if len(ratios) == 3:
-            sampler_names.insert(1, 'validation_sampler')
-        self._samplername2index = {name: i for i, name in enumerate(sampler_names)}
+    disposable_indices = indices[:utils.inf_powerof(len(indices), homo_period)]
+    segments = disposable_indices.reshape((-1, homo_period))
 
-    def __getattr__(self, item):
-        try:
-            super().__getattribute__(item)
-        except AttributeError as e:
-            try:
-                return self._make_sampler(self._segindices_pc[self._samplername2index[item]])
-            except KeyError:
-                raise e
+    # do partition on segments as per ratios
+    segindices_pc = list([] for _ in range(len(ratios)))
+    n = segments.shape[0]
+    for i in range(0, n, alternating_period):
+        group = segments[i:min(n, i + alternating_period)]
+        gn = group.shape[0]
+        # why to add 1e-6: so that np.round(0.5 + 1e-6) returns 1.0.
+        # Try it: np.round(0.5) -> 0.0, which is incorrect in this context
+        quota = np.round(ratios * gn + 1e-6).astype(np.int64)
+        quota[-1] = gn - quota[:-1].sum()
+        gind = np.arange(gn)
+        lims = np.insert(np.cumsum(quota), 0, 0)
+        for j, segindices in enumerate(segindices_pc):
+            segindices.append(group[gind[lims[j]:lims[j + 1]]])
+    return segindices_pc
 
-    def do_sample(self, segments: np.ndarray, ratios: np.ndarray) -> List[np.ndarray]:
-        segindices_pc = list([] for _ in range(len(ratios)))
-        n = segments.shape[0]
-        for i in range(0, n, self.alternating_period):
-            group = segments[i:min(n, i + self.alternating_period)]
-            gn = group.shape[0]
-            # why to add 1e-6: so that np.round(0.5 + 1e-6) returns 1.0.
-            # Try it: np.round(0.5) -> 0.0, which is incorrect in this context
-            quota = np.round(ratios * gn + 1e-6).astype(np.int64)
-            quota[-1] = gn - quota[:-1].sum()
-            gind = np.arange(gn)
-            lims = np.insert(np.cumsum(quota), 0, 0)
-            for j, segindices in enumerate(segindices_pc):
-                segindices.append(group[gind[lims[j]:lims[j+1]]])
-        segindices_pc = list(map(np.concatenate, segindices_pc))
-        return segindices_pc
 
-    def _make_sampler(self, segindices: np.ndarray) -> Sampler:
-        segindices = np.copy(segindices)
-        if self.shuffled:
-            perm = np.random.permutation(segindices.shape[0])
-            segindices = segindices[perm]
-        indices = list(segindices.reshape(-1))
-        return more_sampler.ListSampler(indices)
+def contiguous_partition_dataset(indices: Sequence[int],
+                                 ratios: Sequence[int]) -> List[np.ndarray]:
+    """
+    Partition the indices of a dataset into K contiguous regions such that the
+    length of the ith region is proportional to the fraction of the ith element
+    of ``ratios`` in ``sum(ratios)``, where K equals to the length of
+    ``ratios``.
+
+    :param indices: the indices to partition
+    :param ratios: sequence of integers, the size of each class will be
+           proportional to the fractions of these integers against the sum
+    :return: K arrays of indices
+    """
+    indices = np.array(indices, dtype=np.int64)
+    ratios = np.array(ratios, dtype=np.float64)
+    ratios = ratios / ratios.sum()
+    quota = np.round(ratios * len(indices) + 1e-6).astype(np.int64)
+    quota[-1] = len(indices) - quota[:-1].sum()
+    lims = np.insert(np.cumsum(quota), 0, 0)
+    partitions = []
+    for j in range(len(ratios)):
+        partitions.append(indices[lims[j]:lims[j+1]])
+    return partitions
 
 
 class SlidingWindowBatchSampler(Sampler):
     """
     Samples in a sliding window manner.
     """
+
     def __init__(self, indices, window_width: int,
-                 shuffled: bool=False, batch_size: int=1,
-                 drop_last: bool=False):
+                 shuffled: bool = False, batch_size: int = 1,
+                 drop_last: bool = False):
         """
         :param indices: array-like integer indices to sample; when presented as
                a list of arrays, no sample will span across more than one array
@@ -263,7 +223,7 @@ class SlidingWindowBatchSampler(Sampler):
                 len(segid_startindices))
         _gi = partial(op.getitem, segid_startindices)
         for i in range(0, len(segid_startindices), self.batch_size):
-            ind_tosample = perm[i:i+self.batch_size]
+            ind_tosample = perm[i:i + self.batch_size]
             if not (len(ind_tosample) < self.batch_size and self.drop_last):
                 segid_startind_tosample = map(_gi, ind_tosample)
                 sampled_batches = map(self._sample_batch_once, segid_startind_tosample)
@@ -274,5 +234,4 @@ class SlidingWindowBatchSampler(Sampler):
 
     def _sample_batch_once(self, segid_startind):
         segid, startind = segid_startind
-        return self.indices[segid][startind:startind+self.window_width]
-
+        return self.indices[segid][startind:startind + self.window_width]
