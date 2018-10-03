@@ -126,7 +126,7 @@ def train_pred9_f1to8_no_attn(vdset: vmdata.VideoDataset,
                 inputs = ld.rearrange_temporal_batch(inputs, 9)
                 inputs, targets = inputs[:, :, :-1, :, :], inputs[:, :, -1:, :, :]
                 inputs, targets = inputs.to(device), targets.to(device)
-                outputs, attns = cae(inputs)
+                outputs = cae(inputs)
                 loss = mse(outputs, targets)
 
                 if stage == 'train':
