@@ -13,11 +13,12 @@ class EzFirstCAE(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
         self.attention = attention
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         code = self.encoder(x)
         rec = self.decoder(code)
-        attn = self.attention(code)
+        attn = self.sigmoid(self.attention(code))
         return rec, attn
 
 

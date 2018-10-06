@@ -80,7 +80,6 @@ class STCAEDecoder(nn.Module):
             nn.ReLU(inplace=True),
 
             nn.ConvTranspose3d(16, 1, (1, 2, 2), stride=(1, 2, 2)),
-            nn.Sigmoid(),
         )
 
         for m in self.modules():

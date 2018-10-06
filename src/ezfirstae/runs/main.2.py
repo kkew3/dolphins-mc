@@ -28,7 +28,7 @@ device = 'cuda'
 if __name__ == '__main__':
     logger = logging.getLogger()
     logger.info('Begin training: model=ezfirstae.models.pred9_f1to8(no-attention)')
-    with vmdata.VideoDataset(root, transform=transform) as vdset:
+    with vmdata.VideoDataset(root, transform=transform, max_mmap=3, max_gzcache=100) as vdset:
         trainset, testset = ld.contiguous_partition_dataset(range(len(vdset)), (5, 1))
         try:
             train.train_pred9_f1to8_no_attn(vdset, trainset, testset,
