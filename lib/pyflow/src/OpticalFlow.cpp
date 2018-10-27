@@ -10,7 +10,8 @@
 using namespace std;
 
 #ifndef _MATLAB
-	bool OpticalFlow::IsDisplay=true;
+	//bool OpticalFlow::IsDisplay=true;
+	bool OpticalFlow::IsDisplay=false;
 #else
 	bool OpticalFlow::IsDisplay=false;
 #endif
