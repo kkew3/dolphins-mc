@@ -42,5 +42,4 @@ def main():
         extract(args.fromf, args.tof, dset, args.fps, args.out)
 
 if __name__ == '__main__':
-    with vmdata.VideoDataset(vmdata.prepare_dataset_root(9, (8, 0, 0))) as dset:
-        extract(19, 50, dset, 30.0, 'seg.avi')
+    main()
