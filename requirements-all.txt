@@ -15,3 +15,6 @@ keras==2.0.6
 # for compatible with the original pytorch-faster-rcnn project
 cffi
 easydict==1.6
+
+# for experiment (extended)
+jupyter_contrib_nbextensions
