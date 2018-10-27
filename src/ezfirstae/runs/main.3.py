@@ -1,4 +1,4 @@
-# Lower initial learning rate than main.0.py
+# Lower initial learning rate than main.1.py
 import os
 
 _cd = os.path.dirname(os.path.realpath(__file__))
@@ -26,18 +26,15 @@ statdir = 'stat.{}'.format(_rid)
 savedir = 'save.{}'.format(_rid)
 device = 'cuda'
 lr = 5e-5
-lam_dark = 0.1
-lam_nrgd = 0.05
 
 if __name__ == '__main__':
     logger = logging.getLogger()
-    logger.info('Begin training: model=ezfirstae.models.pred9_f1to8 lam_dark={}'
-                ' lam_nrgd={}'.format(lam_dark, lam_nrgd))
-    with vmdata.VideoDataset(root, transform=transform) as vdset:
+    logger.info('Begin training: model=ezfirstae.models.pred9_f1to8(no-attention)')
+    with vmdata.VideoDataset(root, transform=transform, max_mmap=3, max_gzcache=100) as vdset:
         trainset, testset = ld.contiguous_partition_dataset(range(len(vdset)), (5, 1))
         try:
-            train.train_pred9_f1to8(vdset, trainset, testset, savedir, statdir,
-                                    device, max_epoch, lr, lam_dark, lam_nrgd)
+            train.train_pred9_f1to8_no_attn(vdset, trainset, testset,
+                                            savedir, statdir, device, max_epoch, lr)
         except KeyboardInterrupt:
             logger.warning('User interrupt')
             print('Cleaning up ...', file=sys.stderr)

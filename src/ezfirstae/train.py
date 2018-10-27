@@ -21,6 +21,7 @@ def train_pred9_f1to8(vdset: vmdata.VideoDataset,
                       savedir: str, statdir: str,
                       device: Union[str, torch.device] = 'cpu',
                       max_epoch: int = 1,
+                      lr: float=0.001,
                       lam_dark: float = 1.0,
                       lam_nrgd: float = 0.2):
     logger = logging.getLogger('.'.join([__name__, 'train_pred9_f1to8']))
@@ -57,7 +58,7 @@ def train_pred9_f1to8(vdset: vmdata.VideoDataset,
     stsaver = trainlib.StatSaver(statdir, statname_tmpl='stats_{0}_{1}.npz',
                                  fired=lambda pg: True)
     alpha = 0.9  # the resistance of the moving average approximation of mean loss
-    optimizer = optim.Adam(ezcae.parameters())
+    optimizer = optim.Adam(ezcae.parameters(), lr=lr)
 
     for epoch in range(max_epoch):
         for stage, dataset in [('train', trainset), ('eval', testset)]:
@@ -95,7 +96,8 @@ def train_pred9_f1to8_no_attn(vdset: vmdata.VideoDataset,
                               trainset: Sequence[int], testset: Sequence[int],
                               savedir: str, statdir: str,
                               device: Union[str, torch.device] = 'cpu',
-                              max_epoch: int = 1):
+                              max_epoch: int = 1,
+                              lr: float=0.001):
     logger = logging.getLogger('.'.join([__name__, 'train_pred9_f1to8_no_attn']))
     if isinstance(device, str):
         device = torch.device(device)
@@ -112,7 +114,7 @@ def train_pred9_f1to8_no_attn(vdset: vmdata.VideoDataset,
     stsaver = trainlib.StatSaver(statdir, statname_tmpl='stats_{0}_{1}.npz',
                                  fired=lambda pg: True)
     alpha = 0.9  # the resistance of the moving average approximation of mean loss
-    optimizer = optim.Adam(cae.parameters())
+    optimizer = optim.Adam(cae.parameters(), lr=lr)
 
     for epoch in range(max_epoch):
         for stage, dataset in [('train', trainset), ('eval', testset)]:

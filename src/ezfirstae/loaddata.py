@@ -16,9 +16,22 @@ import utils
 class PreProcTransform(object):
     """
     The pre-processing transformation before the encoder.
+
+    Steps:
+
+        1. convert RGB to B&W by taking the maximum along the channel axis
+        2. downsample by specified scale
+        3. random crop a little bit such that the height and the width are
+           both powers of the subsequent pooling scale
+        4. normalize the image matrix
+        5. optionally convert B&W back to RGB by repeating the image matrix
+           three times along the channel axis
     """
 
-    def __init__(self, normalize, pool_scale: int = 1, downsample_scale: int = 2):
+    def __init__(self, normalize,
+                 pool_scale: int = 1,
+                 downsample_scale: int = 2,
+                 to_rgb=False):
         """
         :param normalize: the normalization transform, i.e.
                ``torchvision.transforms.Normalize`` instance
@@ -28,11 +41,14 @@ class PreProcTransform(object):
                the power of ``pool_scale``, so that ``unpool(pool(x))`` is of
                the same shape as ``x``
         :param downsample_scale: the scale to downsample the video frames
+        :param to_rgb: if True, at the last step convert from B&W image to
+               RGB image
         """
         self.T = trans.ToTensor()
         self.normalize = normalize
         self.pool_scale = pool_scale
         self.downsample_scale = downsample_scale
+        self.to_rgb = to_rgb
 
     def __call__(self, img: np.ndarray) -> torch.Tensor:
         toshape = tuple(x // self.downsample_scale for x in img.shape[:2])
@@ -48,6 +64,8 @@ class PreProcTransform(object):
         img = self.crop(img)
         tensor = self.T(img)
         normalized = self.normalize(tensor)
+        if self.to_rgb:
+            normalized = normalized.repeat(3, *([1]*(len(normalized.shape)-1)))
         return normalized
 
 

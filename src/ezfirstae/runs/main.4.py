@@ -1,4 +1,5 @@
 # Lower initial learning rate than main.0.py
+# No Sobel filter after attention
 import os
 
 _cd = os.path.dirname(os.path.realpath(__file__))
@@ -27,7 +28,7 @@ savedir = 'save.{}'.format(_rid)
 device = 'cuda'
 lr = 5e-5
 lam_dark = 0.1
-lam_nrgd = 0.05
+lam_nrgd = 0.0
 
 if __name__ == '__main__':
     logger = logging.getLogger()

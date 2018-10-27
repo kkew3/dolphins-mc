@@ -2,6 +2,10 @@ import torch
 import torch.nn as nn
 
 
+pool_scale = 8
+temporal_batch_size = 8
+
+
 class STCAEEncoder(nn.Module):
     """
     The ST-CAE encoder that expects frames over 8 time steps and outputs a
@@ -48,11 +52,11 @@ class STCAEEncoder(nn.Module):
                 nn.init.kaiming_normal_(m.weight.data)
                 nn.init.zeros_(m.bias.data)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        assert x.size(2) == 8
-        assert x.size(3) % 8 == 0 and x.size(4) % 8 == 0
-        code = self.features(x)
-        return code
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        assert inputs.size(2) == temporal_batch_size
+        assert all(inputs.size(i) % pool_scale == 0 for i in (3, 4))
+        codes = self.features(inputs)
+        return codes
 
 
 class STCAEDecoder(nn.Module):
