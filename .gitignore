@@ -42,11 +42,17 @@ src/classloc/data/
 *.jpg
 *.jpeg
 
+# intermediate files
+*.so
+*.o
+lib/pyflow/pyflow.cpp
+
 # temporary test files
 *test*.py
 *test*.ipynb
 # but include test folder
 #*/test/
+src/ezfirstae/runs/experiments/
 
 # jupyter notebook checkpoint
 .ipynb_checkpoints
@@ -63,3 +69,9 @@ src/prednet_ref1_pytorch/
 
 # logs
 lib/.vmdata.log
+
+# auxiliary files
+build.xml
+.ant-targets-build.xml
+experiments/*.py
+experiments/Makefile*
