@@ -81,17 +81,49 @@ class MedianBlur(object):
         return filters.median_filter(img, (self.width, self.width, 1))
 
 
+class RGB2Gray(object):
+    """
+    Applicable only to PyTorch tensor.
+    """
+
+    def __init__(self, shape="chw"):
+        """
+        :param shape: either "chw" or "hwc"
+        """
+        self.cdim = shape.index('c')
+
+    def __call__(self, tensor):
+        gray_tensor, _ = tensor.max(self.cdim, keepdim=True)
+        return gray_tensor
+
+
 def hwc2chw(tensor):
     """
-    Transpose a numpy array from HWC to CHW.
+    Transpose a numpy array from HWC to CHW, or from BHWC to BCHW.
     """
-    return np.transpose(tensor, (2, 0, 1))
+    ndim2transpose = {
+        3: (2, 0, 1),
+        4: (0, 3, 1, 2),
+    }
+    try:
+        return np.transpose(tensor, ndim2transpose[len(tensor.shape)])
+    except KeyError:
+        raise ValueError('Expecting tensor of three or four axes, but got {}'
+                         .format(len(tensor.shape)))
 
 def chw2hwc(tensor):
     """
-    Transpose a numpy array from CHW to HWC.
+    Transpose a numpy array from CHW to HWC, or from BCHW to BHWC.
     """
-    return np.transpose(tensor, (1, 2, 0))
+    ndim2transpose = {
+        3: (1, 2, 0),
+        4: (0, 2, 3, 1),
+    }
+    try:
+        return np.transpose(tensor, ndim2transpose[len(tensor.shape)])
+    except KeyError:
+        raise ValueError('Expecting tensor of three or four axes, but got {}'
+                         .format(len(tensor.shape)))
 
 def numpy_loader(dataloader):
     """
