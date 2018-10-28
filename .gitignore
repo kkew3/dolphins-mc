@@ -60,6 +60,7 @@ src/ezfirstae/runs/experiments/
 # temporary local script
 _*.sh
 _*.py
+_*.sed
 
 # cloned repo (as reference)
 src/prednet_ref1_pytorch/
