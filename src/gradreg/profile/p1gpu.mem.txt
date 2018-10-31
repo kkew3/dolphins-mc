@@ -1,0 +1,26 @@
+Filename: p1gpu.py
+Line #    Mem usage    Increment   Line Contents
+================================================
+    10  116.078 MiB  116.078 MiB   @profile
+    11                             def backward():
+    12                                 # firstly a no-op statement
+    13  116.078 MiB    0.000 MiB       time.sleep(1)
+    14
+    15  116.078 MiB    0.000 MiB       device = torch.device('cuda')
+    16 1906.656 MiB 1790.578 MiB       encoder = STCAEEncoder().to(device)
+    17 1906.684 MiB    0.027 MiB       decoder = STCAEDecoder().to(device)
+    18 1906.684 MiB    0.000 MiB       criterion = nn.MSELoss().to(device)
+    19
+    20 1915.812 MiB    9.129 MiB       inputs = torch.rand(8, 1, 8, 160, 232).to(device)
+    21 1915.812 MiB    0.000 MiB       targets = torch.rand(8, 1, 1, 160, 232).to(device)
+    22
+    23 1915.812 MiB    0.000 MiB       with gradreg(inputs) as ns:
+    24 1919.320 MiB    3.508 MiB           codes = encoder(inputs)
+    25 1919.676 MiB    0.355 MiB           predictions = decoder(codes)
+    26 1921.617 MiB    1.941 MiB           ns.loss = criterion(predictions, targets)
+    27 1922.566 MiB    0.949 MiB       ns.loss.backward()
+    28
+    29                                 # emulating reassignments
+    30 1922.566 MiB    0.000 MiB       loss = None
+    31 1922.566 MiB    0.000 MiB       inputs = None
+    32 1922.566 MiB    0.000 MiB       targets = None
