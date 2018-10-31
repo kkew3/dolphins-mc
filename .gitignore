@@ -65,9 +65,6 @@ _*.sed
 # cloned repo (as reference)
 src/prednet_ref1_pytorch/
 
-# profile result
-**/profile/
-
 # logs
 lib/.vmdata.log
 
