@@ -1,5 +1,4 @@
 import logging
-import sys
 from typing import Union, Sequence, Tuple
 
 import numpy as np
@@ -9,9 +8,10 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import torchvision.transforms as trans
 
+import more_sampler
+import more_trans
 import vmdata
 import trainlib
-import ezfirstae.loaddata as ld
 import ezfirstae.basicmodels as basicmodels
 import ezfirstae.models.pred9_f1to8 as pred9_f1to8
 
@@ -62,14 +62,14 @@ def train_pred9_f1to8(vdset: vmdata.VideoDataset,
 
     for epoch in range(max_epoch):
         for stage, dataset in [('train', trainset), ('eval', testset)]:
-            swsam = ld.SlidingWindowBatchSampler(dataset, 9, shuffled=True, batch_size=8)
+            swsam = more_sampler.SlidingWindowBatchSampler(dataset, 1 + pred9_f1to8.temporal_batch_size, shuffled=True, batch_size=8)
             dataloader = DataLoader(vdset, batch_sampler=swsam)
             moving_average = None
             getattr(ezcae, stage)()  # ezcae.train() or ezcae.eval()
             torch.set_grad_enabled(stage == 'train')
             for j, inputs in enumerate(dataloader):
                 progress = epoch, j
-                inputs = ld.rearrange_temporal_batch(inputs, 9)
+                inputs = more_trans.rearrange_temporal_batch(inputs, 1 + pred9_f1to8.temporal_batch_size)
                 inputs, targets = inputs[:, :, :-1, :, :], inputs[:, :, -1:, :, :]
                 inputs, targets = inputs.to(device), targets.to(device)
                 outputs, attns = ezcae(inputs)
@@ -118,14 +118,14 @@ def train_pred9_f1to8_no_attn(vdset: vmdata.VideoDataset,
 
     for epoch in range(max_epoch):
         for stage, dataset in [('train', trainset), ('eval', testset)]:
-            swsam = ld.SlidingWindowBatchSampler(dataset, 9, shuffled=True, batch_size=8)
+            swsam = more_sampler.SlidingWindowBatchSampler(dataset, 9, shuffled=True, batch_size=8)
             dataloader = DataLoader(vdset, batch_sampler=swsam)
             moving_average = None
             getattr(cae, stage)()  # ezcae.train() or ezcae.eval()
             torch.set_grad_enabled(stage == 'train')
             for j, inputs in enumerate(dataloader):
                 progress = epoch, j
-                inputs = ld.rearrange_temporal_batch(inputs, 9)
+                inputs = more_trans.rearrange_temporal_batch(inputs, 9)
                 inputs, targets = inputs[:, :, :-1, :, :], inputs[:, :, -1:, :, :]
                 inputs, targets = inputs.to(device), targets.to(device)
                 outputs = cae(inputs)
