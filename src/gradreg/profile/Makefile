@@ -46,5 +46,5 @@ endif
 	sed '/@profile/d' $< > $@
 
 clean:
-	rm -f -- $(wildcard *.py.prof)
+	rm -f -- $(wildcard *.py.lprof)
 	rm -f -- $(wildcard *gpu.precuda.py)
