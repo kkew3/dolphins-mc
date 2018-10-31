@@ -5,6 +5,9 @@ CUDASRCS := $(wildcard *gpu.py)
 CUDAOBJS := $(CUDASRCS:.py=.cuda.txt)
 
 nvprof := /usr/local/cuda/bin/nvprof
+#NVPROFFLAGS := --profile-child-processes --track-memory-allocations on
+# with "--track-memory-allocations on" it somehow fails
+NVPROFFLAGS := --profile-child-processes
 
 .PHONY: all cuda clean
 
@@ -39,11 +42,14 @@ endif
 	$(call postproc_profile_result,$@)
 
 %gpu.cuda.txt: %gpu.precuda.py
-	$(nvprof) --profile-child-processes python $< 2> $@
+	$(nvprof) $(NVPROFFLAGS) python $< 2> $@
 	$(call postproc_profile_result,$@)
 
 %gpu.precuda.py: %gpu.py
 	sed '/@profile/d' $< > $@
+	sed -i '1s/^/import ctypes; _cudart = ctypes.CDLL("libcudart.so")\n/' $@
+	sed -i "$$(grep -nA1 'if __name__ == \(['"'"'"]\)__main__\1' p1.py | cut -d':' -f1 | cut -d'-' -f1 | tail -1)"'s/^/    _cudart\.cudaProfilerStart()\n/' $@
+	echo '    _cudart.cudaProfilerStop()' >> $@
 
 clean:
 	rm -f -- $(wildcard *.py.lprof)
