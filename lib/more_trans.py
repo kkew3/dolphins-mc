@@ -14,6 +14,7 @@ class DeNormalize(object):
     :param mean: the mean used in ``Normalize``
     :param std: the std used in ``Normalize``
     """
+
     def __init__(self, mean, std):
         self.mean = torch.tensor(mean, dtype=torch.float).view(-1, 1, 1)
         self.std = torch.tensor(std, dtype=torch.float).view(-1, 1, 1)
@@ -23,10 +24,12 @@ class DeNormalize(object):
         tensor.add_(self.mean)
         return tensor
 
+
 class ResetChannel(object):
     """
     Resets a specific input channel to 0.0.
     """
+
     def __init__(self, channel):
         """
         :param channel: the channel to reset
@@ -39,11 +42,13 @@ class ResetChannel(object):
         tensor[self.channel].zero_()
         return tensor
 
+
 class GaussianBlur(object):
     """
     Applicable only to Numpy arrays; thus it should be inserted before
     ``trans.ToTensor()``.
     """
+
     def __init__(self, std=1.5, tr_std=4.0):
         """
         :param std: the standard deviations
@@ -61,11 +66,13 @@ class GaussianBlur(object):
         return filters.gaussian_filter(img, (self.std, self.std, 0.0),
                                        truncate=self.tr_std)
 
+
 class MedianBlur(object):
     """
     Applicable only to Numpy arrays; thus it should be inserted before
     ``trans.ToTensor()``.
     """
+
     def __init__(self, width=5):
         """
         :param width: the width of the sliding window.
@@ -111,6 +118,7 @@ def hwc2chw(tensor):
         raise ValueError('Expecting tensor of three or four axes, but got {}'
                          .format(len(tensor.shape)))
 
+
 def chw2hwc(tensor):
     """
     Transpose a numpy array from CHW to HWC, or from BCHW to BHWC.
@@ -125,6 +133,7 @@ def chw2hwc(tensor):
         raise ValueError('Expecting tensor of three or four axes, but got {}'
                          .format(len(tensor.shape)))
 
+
 def numpy_loader(dataloader):
     """
     Generator that converts pytorch tensor to numpy array on the fly.
@@ -137,3 +146,26 @@ def numpy_loader(dataloader):
             yield tuple(x.numpy() for x in item)
         else:
             yield item.numpy()
+
+
+def rearrange_temporal_batch(data_batch: torch.Tensor, T: int) -> torch.Tensor:
+    """
+    Rearrange a hyper-batch of frames of shape (B*T, C, H, W) into
+    (B, C, T, H, W) where:
+
+        - B: the batch size
+        - C: the number of channels
+        - T: the temporal batch size
+        - H: the height
+        - W: the width
+
+    :param data_batch: batch tensor to convert
+    :param T: the temporal batch size
+    :return: converted batch
+    """
+    assert len(data_batch.size()) == 4
+    assert data_batch.size(0) % T == 0
+    B = data_batch.size(0) // T
+    data_batch = data_batch.view(B, T, *data_batch.shape[1:])
+    data_batch = data_batch.transpose(1, 2).contiguous()
+    return data_batch.detach()  # so that ``is_leaf`` is True

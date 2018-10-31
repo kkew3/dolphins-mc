@@ -1,15 +1,9 @@
-import itertools
-import operator as op
-from functools import partial
-
 import numpy as np
 from PIL import Image
 import torch
-from torch.utils.data import DataLoader, Sampler
 from torchvision import transforms as trans
-from typing import Union, Tuple, List, Sequence
+from typing import List, Sequence
 
-import more_sampler
 import utils
 
 
@@ -67,29 +61,6 @@ class PreProcTransform(object):
         if self.to_rgb:
             normalized = normalized.repeat(3, *([1]*(len(normalized.shape)-1)))
         return normalized
-
-
-def rearrange_temporal_batch(data_batch: torch.Tensor, T: int) -> torch.Tensor:
-    """
-    Rearrange a hyper-batch of frames of shape (B*T, C, H, W) into
-    (B, C, T, H, W) where:
-
-        - B: the batch size
-        - C: the number of channels
-        - T: the temporal batch size
-        - H: the height
-        - W: the width
-
-    :param data_batch: batch tensor to convert
-    :param T: the temporal batch size
-    :return: converted batch
-    """
-    assert len(data_batch.size()) == 4
-    assert data_batch.size(0) % T == 0
-    B = data_batch.size(0) // T
-    data_batch = data_batch.view(B, T, *data_batch.shape[1:])
-    data_batch = data_batch.transpose(1, 2).contiguous()
-    return data_batch.detach()  # so that ``is_leaf`` is True
 
 
 def alternate_partition_dataset(indices: Sequence[int],
@@ -188,68 +159,3 @@ def contiguous_partition_dataset(indices: Sequence[int],
     for j in range(len(ratios)):
         partitions.append(indices[lims[j]:lims[j+1]])
     return partitions
-
-
-class SlidingWindowBatchSampler(Sampler):
-    """
-    Samples in a sliding window manner.
-    """
-
-    def __init__(self, indices, window_width: int,
-                 shuffled: bool = False, batch_size: int = 1,
-                 drop_last: bool = False):
-        """
-        :param indices: array-like integer indices to sample; when presented as
-               a list of arrays, no sample will span across more than one array
-        :param window_width: the width of the window; if ``window_width`` is
-               larger than the length of ``indices`` or the length of one of
-               the sublists, then that list won't be sampled
-        :param shuffled: whether to shuffle sampling, but the indices order
-               within a batch is never shuffled
-        :param batch_size: how many batches to yield upon each sampling
-        :param drop_last: True to drop the remaining batches if the number of
-               remaining batches is less than ``batch_size``
-
-        Note on ``batch_size``
-        ----------------------
-
-        When ``batch_size = 2``, assuming that the two batch of indices are
-        ``[1, 2, 3, 4]`` and ``[4, 5, 6, 7]``, then the yielded hyper-batch
-        will be ``[1, 2, 3, 4, 4, 5, 6, 7]``.
-        """
-        indices = list(map(lambda x: x.astype(np.int64), np.array(indices)))
-        if indices and not len(indices[0].shape):
-            indices = [np.array(indices)]
-        self.indices = indices  # a list of int64-arrays, or an empty list
-        self.window_width = window_width
-        self.shuffled = shuffled
-        self.batch_size = batch_size
-        self.drop_last = drop_last
-
-    def __len__(self):
-        return sum(map(self._calc_sliding_distance, map(len, self.indices)))
-
-    def __iter__(self):
-        seglens = map(len, self.indices)
-        slidedists = map(self._calc_sliding_distance, seglens)
-        startindices = map(range, slidedists)
-        segid_startindices = enumerate(startindices)
-        segid_startindices = map(lambda x: utils.browadcast_value2list(*x),
-                                 segid_startindices)
-        segid_startindices = list(itertools.chain(*segid_startindices))
-        perm = (np.random.permutation if self.shuffled else np.arange)(
-                len(segid_startindices))
-        _gi = partial(op.getitem, segid_startindices)
-        for i in range(0, len(segid_startindices), self.batch_size):
-            ind_tosample = perm[i:i + self.batch_size]
-            if not (len(ind_tosample) < self.batch_size and self.drop_last):
-                segid_startind_tosample = map(_gi, ind_tosample)
-                sampled_batches = map(self._sample_batch_once, segid_startind_tosample)
-                yield list(np.concatenate(list(sampled_batches)))
-
-    def _calc_sliding_distance(self, length):
-        return length - self.window_width + 1
-
-    def _sample_batch_once(self, segid_startind):
-        segid, startind = segid_startind
-        return self.indices[segid][startind:startind + self.window_width]
