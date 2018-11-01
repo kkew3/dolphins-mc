@@ -59,7 +59,8 @@ class PreProcTransform(object):
         tensor = self.T(img)
         normalized = self.normalize(tensor)
         if self.to_rgb:
-            normalized = normalized.repeat(3, *([1]*(len(normalized.shape)-1)))
+            assert len(normalized.shape) == 2, str(normalized.shape)
+            normalized = np.repeat(normalized[..., np.newaxis], 3, axis=2)
         return normalized
 
 
