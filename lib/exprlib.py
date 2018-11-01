@@ -5,6 +5,10 @@ Common utilities used in experiments.
 import os
 import json
 import tempfile
+import contextlib
+from types import SimpleNamespace
+
+import numpy as np
 
 
 class ExperimentLauncher(object):
@@ -108,3 +112,21 @@ class ExperimentLauncher(object):
                 json.dump(enckwargs, outfile)
             result = new_result
         return result
+
+
+@contextlib.contextmanager
+def fig_as_data(plt, fig, ax, with_alpha=False):
+    plt.axis('off')
+    ns = SimpleNamespace()
+    try:
+        yield ns
+    except:
+        raise
+    else:
+        fig.canvas.draw()
+        data = np.array(fig.canvas.renderer._renderer)
+        if not with_alpha:
+            data = data[...,:3]
+        ns.data = data
+    finally:
+        plt.close()
