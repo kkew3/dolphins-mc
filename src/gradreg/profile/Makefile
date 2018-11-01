@@ -52,5 +52,5 @@ endif
 	echo '    _cudart.cudaProfilerStop()' >> $@
 
 clean:
-	rm -f -- $(wildcard *.py.lprof)
-	rm -f -- $(wildcard *gpu.precuda.py)
+	rm -f -- $(SRCS:.py=*.py.lprof)
+	rm -f -- $(CUDASRCS:.py=.precuda.py)
