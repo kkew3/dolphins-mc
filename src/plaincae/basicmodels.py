@@ -1,13 +1,7 @@
 from collections import namedtuple
 
-import numpy as np
 import torch
 import torch.nn as nn
-import torchvision.transforms as trans
-from typing import Tuple
-
-from edgedetect import EdgeDetector
-
 
 SpatioTemporalInputShape = namedtuple('SpatioTemporalInputShape', tuple('BCTHW'))
 SpatioInputShape = namedtuple('SpatioInputShape', tuple('BCHW'))
