@@ -1,9 +1,12 @@
+from typing import Callable, List
+
+import more_trans
 import torch
 import torch.nn as nn
 
-
 pool_scale = 8
 temporal_batch_size = 8
+input_color = 'gray'
 
 
 class STCAEEncoder(nn.Module):
@@ -20,15 +23,15 @@ class STCAEEncoder(nn.Module):
         m3d = nn.MaxPool3d(2, stride=2)
 
         self.features = nn.Sequential(
-            c3d(1, 64), bn(64), relu,
-            c3d(64), bn(64), relu,
-            m3d,
-            c3d(64, 128), bn(128), relu,
-            c3d(128), bn(128), relu,
-            m3d,
-            c3d(128, 256), bn(256), relu,
-            c3d(256), bn(256), relu,
-            m3d,
+                c3d(1, 64), bn(64), relu,
+                c3d(64), bn(64), relu,
+                m3d,
+                c3d(64, 128), bn(128), relu,
+                c3d(128), bn(128), relu,
+                m3d,
+                c3d(128, 256), bn(256), relu,
+                c3d(256), bn(256), relu,
+                m3d,
         )
 
         for m in self.modules():
@@ -59,14 +62,14 @@ class STCAEDecoder(nn.Module):
         bn = nn.BatchNorm3d
 
         self.upsample = nn.Sequential(
-            c3d(256), bn(256), relu,
-            c3d(256, 128), bn(128), relu,
-            c3d(128), bn(128), relu,
-            cp3d(128, 64), bn(64), relu,
-            c3d(64), bn(64), relu,
-            cp3d(64, 32), bn(32), relu,
-            c3d(32), bn(32), relu,
-            cp3d(32, 1),
+                c3d(256), bn(256), relu,
+                c3d(256, 128), bn(128), relu,
+                c3d(128), bn(128), relu,
+                cp3d(128, 64), bn(64), relu,
+                c3d(64), bn(64), relu,
+                cp3d(64, 32), bn(32), relu,
+                c3d(32), bn(32), relu,
+                cp3d(32, 1),
         )
 
         for m in self.modules():
@@ -77,3 +80,23 @@ class STCAEDecoder(nn.Module):
     def forward(self, codes):
         assert codes.size(2) == 1
         return self.upsample(codes)
+
+
+def inputs_as_images(inputs: torch.Tensor,
+                     oob_policy: Callable[[torch.Tensor], torch.Tensor]) -> List[torch.Tensor]:
+    if len(inputs.shape) != 5 or inputs.shape[1:3] != (1, temporal_batch_size):
+        raise ValueError('Expecting shape (B, 1, {}, H, W) but got {}'
+                         .format(temporal_batch_size, tuple(inputs.shape)))
+    inputs = inputs.reshape(inputs.size(0) * inputs.size(2), inputs.size(3), inputs.size(4))
+    inputs = oob_policy(inputs)
+    return list(inputs)
+
+
+def outputs_as_images(outputs: torch.Tensor,
+                      oob_policy: Callable[[torch.Tensor], torch.Tensor]) -> List[torch.Tensor]:
+    if len(outputs.shape) != 5 or outputs.shape[1:3] != (1, 1):
+        raise ValueError('Expecting shape (B, 1, 1, H, W) but got {}'
+                         .format(tuple(outputs.shape)))
+    outputs = outputs.reshape(outputs.size(0), outputs.size(3), outputs.size(4))
+    outputs = oob_policy(outputs)
+    return list(outputs)
