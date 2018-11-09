@@ -3,6 +3,7 @@ Common utilities used in experiments.
 """
 
 import os
+import re
 import json
 import tempfile
 import contextlib
@@ -130,3 +131,25 @@ def fig_as_data(plt, fig, ax, with_alpha=False):
         ns.data = data
     finally:
         plt.close()
+
+
+def get_runid_from_file(_file_: str, return_prefix=False) -> str:
+    r"""
+    Extract runid from __file__, provided that __file__ is of format
+    ``{something}.{runid}.py``, strictly speaking, of regex
+    ``^[^\n\t\.]*\.([^\n\t\.]+)\.py$``.
+
+    >>> get_runid_from_file
+    :param _file_: the ``__file__`` constant
+    :param return_prefix: if True, also returns the ``something`` part
+    :return: the runid
+    """
+    pattern = r'^([^\n\t\.]*)\.([^\n\t\.]+)\.py$'
+    matched = re.match(pattern, os.path.basename(_file_))
+    if not matched:
+        raise ValueError('"{}" not matching pattern \'{}\''
+                         .format(_file_, pattern))
+    if return_prefix:
+        return matched.group(2), matched.group(1)
+    else:
+        return matched.group(2)
