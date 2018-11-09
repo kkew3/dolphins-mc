@@ -169,3 +169,7 @@ def rearrange_temporal_batch(data_batch: torch.Tensor, T: int) -> torch.Tensor:
     data_batch = data_batch.view(B, T, *data_batch.shape[1:])
     data_batch = data_batch.transpose(1, 2).contiguous()
     return data_batch.detach()  # so that ``is_leaf`` is True
+
+
+def clamp_tensor_to_image(tensor: torch.Tensor):
+    return torch.clamp(tensor, 0.0, 1.0)
