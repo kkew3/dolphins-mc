@@ -1,6 +1,7 @@
 import contextlib
 import functools
 from types import SimpleNamespace
+from typing import Iterable, Optional
 
 import torch
 import torch.nn as nn
@@ -8,7 +9,40 @@ from torch.autograd import grad
 
 
 @contextlib.contextmanager
-def gradreg(inputs, strength=0.0, reg_method=functools.partial(torch.norm, p=1)):
+def no_grad_params(m: Optional[nn.Module]=None,
+                   params: Optional[Iterable[nn.Parameter]]=None):
+    """
+    Disable gradient calculation temporarily on a particular module or a set
+    of parameters. This context manager is different from ``torch.no_grad``
+    in that the latter disables all gradient calculation.
+
+    :param m: module to disable gradient calculation
+    :param params: the parameters of ``m`` to disable gradient
+
+    When both ``m`` and ``params`` are specified, ``m`` will be ignored. When
+    neither ``m`` nor ``params`` is specified, this context manager serves
+    identical as ``torch.no_grad``.
+    """
+    disable_all = ((m, params) == (None, None))
+    if not disable_all:
+        if params is None:
+            params = m.parameters()
+        params = list(params)
+        orig_grad_states = [p.requires_grad for p in params]
+    else:
+        torch.set_grad_enabled(False)
+    try:
+        yield
+    finally:
+        if not disable_all:
+            for p, s in zip(params, orig_grad_states):
+                p.requires_grad = s
+        else:
+            torch.set_grad_enabled(True)
+
+
+@contextlib.contextmanager
+def gradreg(inputs, strength=0.0, reg_method=None, train=True):
     r"""
     Apply gradient regularization loss to a provided loss function. Denote the
     loss function (including the network itself), parameterized by
@@ -19,7 +53,8 @@ def gradreg(inputs, strength=0.0, reg_method=functools.partial(torch.norm, p=1))
 
         .. math::
 
-            L_g(x;\theta) = L(x;\theta) + \lambda g\left(\frac{\partial}{\partial x}L(x;\theta)\right)
+            L_g(x;\theta) = L(x;\theta) + \lambda g\left(
+                \frac{\partial}{\partial x}L(x;\theta)\right)
 
     This context manager returns a namespace. By the end of the ``with``
     block, exactly one attribute (of any name) needs to be set into the
@@ -42,11 +77,28 @@ def gradreg(inputs, strength=0.0, reg_method=functools.partial(torch.norm, p=1))
             ns.loss.backward()
             optimizer.step()
 
-    :param inputs: the :math:`x` in the above equation
+    Note that ``ns.loss`` (or whatever name) must be a scalar. This means that
+    if ``x`` is a batch of inputs, then ``ns.loss`` should be the reduced loss
+    of the batch of losses, e.g. the average loss.
+
+    :param inputs: the :math:`x` in the above equation, of shape (B, ...)
     :param strength: the regularization strength
     :param reg_method: a function that takes as input the gradient with
            respect to ``inputs`` and returns a scalar gradient
            regularization loss; default to L1 norm
+    :param train: when set to ``False``, do not create graph for 2nd order
+           derivative
+
+    Pseudocode usage when ``train=False``::
+
+        .. code-block:: python
+
+            with no_grad_params(encoder), no_grad_params(decoder):
+                with gradreg(x, train=False) as ns:
+                    code = encoder(x)
+                    y = decoder(code)
+                    ns.loss = criterion(y, targets)
+                print(ns.loss.item())
 
     A real-life example to compute :math:`\frac{\partial}{\partial w,b}L_g(x;w,b)`
     where :math:`L_g(x;w,b)=w^Tx+b+\|\frac{(w^Tx+b)}{\partial x}\|_1. The
@@ -80,7 +132,14 @@ def gradreg(inputs, strength=0.0, reg_method=functools.partial(torch.norm, p=1))
             raise ValueError('Exactly one attribute needs to be assigned')
         yattr = next(iter(ns.__dict__))
         y = getattr(ns, yattr)
-        gp = reg_method(grad(y, [inputs], create_graph=True)[0])
+        if len(y.size()):
+            raise ValueError('Expected {} to be scalar, but of shape {}'
+                             .format(yattr, y.size()))
+        dx = grad(y, [inputs], create_graph=train)[0]
+        if reg_method:
+            gp = reg_method(dx)
+        else:
+            gp = torch.norm(dx, p=1)
         inputs.requires_grad = xrg
         setattr(ns, yattr, y + strength * gp)
     finally:
