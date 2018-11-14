@@ -62,9 +62,8 @@ import cv2
 import numpy as np
 from cachetools import LRUCache
 from filelock import FileLock
-import torch
 from torch.utils.data import Dataset
-from typing import Iterable, Iterator, List, Tuple, Union, Sequence
+from typing import Iterable, Iterator, List, Tuple
 
 import utils
 
