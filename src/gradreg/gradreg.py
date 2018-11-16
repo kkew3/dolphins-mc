@@ -1,5 +1,4 @@
 import contextlib
-import functools
 from types import SimpleNamespace
 from typing import Iterable, Optional
 
@@ -64,7 +63,7 @@ def gradreg(inputs, strength=0.0, reg_method=None, train=True):
     value of the attribute becomes :math:`L_g(x;\theta)`. Now backward can be
     done on it. The backward must not be done within the ``with`` block.
 
-    Pseudocode usage:
+    Pseudocode usage::
 
         .. code-block:: python
 
