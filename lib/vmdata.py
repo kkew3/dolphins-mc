@@ -66,6 +66,7 @@ from torch.utils.data import Dataset
 from typing import Iterable, Iterator, List, Tuple
 
 import utils
+from utils import loggername as _l
 
 _cd = os.path.dirname(os.path.realpath(__file__))
 
@@ -269,7 +270,7 @@ class VideoDataset(Dataset):
         self.access_locks = [FileLock(lockfile_tmpl.format(bid))
                              for bid in range(len(self.metainfo['lens']))]
 
-        logger = logging.getLogger('.'.join([type(self).__name__, '__init__']))
+        logger = logging.getLogger(_l(__name__, self, '__init__'))
         logger.info('Instantiated: root={}'.format(self.root))
 
 
@@ -290,7 +291,7 @@ class VideoDataset(Dataset):
         :return: the frame in numpy array of dimension HWC
         :rtype: np.ndarray
         """
-        logger = logging.getLogger('.'.join([type(self).__name__, '__getitem__']))
+        logger = logging.getLogger(_l(__name__, self, '__getitem__'))
         if frame_id < 0 or frame_id >= len(self):
             raise IndexError('Invalid index: {}'.format(frame_id))
 
@@ -343,7 +344,7 @@ class VideoDataset(Dataset):
             yield self[i]
 
     def cleanup_unused_mmapfiles(self):
-        logger = logging.getLogger('.'.join([type(self).__name__, 'cleanup_unused_mmapfiles']))
+        logger = logging.getLogger(_l(__name__, self, 'cleanup_unused_mmapfiles'))
         for filename in os.listdir(self.root_tmp):
             matched = DATABATCH_FILENAME_PAT.match(filename)
             if matched:
@@ -373,7 +374,7 @@ class VideoDataset(Dataset):
         file. Usually this function is unnecessary unless the user want to save
         some disk space.
         """
-        logger = logging.getLogger('.'.join([type(self).__name__, 'cleanup_all_mmapfiles']))
+        logger = logging.getLogger(_l(__name__, self, 'cleanup_all_mmapfiles'))
         if os.path.isdir(self.root_tmp):
             shutil.rmtree(self.root_tmp)
         if not os.path.isdir(self.root_tmp):
@@ -390,7 +391,7 @@ class VideoDataset(Dataset):
         """
         Release all memory mapped dataset.
         """
-        logger = logging.getLogger('.'.join([type(self).__name__, 'release_mmap']))
+        logger = logging.getLogger(_l(__name__, self, 'release_mmap'))
         keys = list(self.mmap_cache.keys())
         for k in keys:
             del self.mmap_cache[k]
