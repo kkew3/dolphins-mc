@@ -8,6 +8,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import torchvision.transforms as trans
 
+from utils import loggername as _l
 import more_sampler
 import more_trans
 import vmdata
@@ -24,7 +25,7 @@ def train_pred9_f1to8(vdset: vmdata.VideoDataset,
                       lr: float=0.001,
                       lam_dark: float = 1.0,
                       lam_nrgd: float = 0.2):
-    logger = logging.getLogger('.'.join([__name__, 'train_pred9_f1to8']))
+    logger = logging.getLogger(_l(__name__, 'train_pred9_f1to8'))
     if isinstance(device, str):
         device = torch.device(device)
 
@@ -98,7 +99,7 @@ def train_pred9_f1to8_no_attn(vdset: vmdata.VideoDataset,
                               device: Union[str, torch.device] = 'cpu',
                               max_epoch: int = 1,
                               lr: float=0.001):
-    logger = logging.getLogger('.'.join([__name__, 'train_pred9_f1to8_no_attn']))
+    logger = logging.getLogger(_l(__name__, 'train_pred9_f1to8_no_attn'))
     if isinstance(device, str):
         device = torch.device(device)
 
