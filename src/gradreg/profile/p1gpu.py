@@ -3,7 +3,7 @@ import time
 import torch
 import torch.nn as nn
 
-from plaincae.models.wide_pred9_f1to8 import STCAEEncoder, STCAEDecoder
+from grplaincae.models.wide_pred9_f1to8 import STCAEEncoder, STCAEDecoder
 from gradreg import gradreg
 
 
