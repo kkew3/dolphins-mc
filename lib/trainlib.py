@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 from typing import Any, Union, Callable, Iterable, Tuple, Dict
 
+from utils import loggername as _l
+
 
 def action_fired(fired: Union[int, Callable[[Any], bool]]) -> Callable[[Any], bool]:
     """
@@ -23,7 +25,7 @@ def action_fired(fired: Union[int, Callable[[Any], bool]]) -> Callable[[Any], bo
            ``fired`` is an int, then ``fired`` will be initialized to
            ``lambda x: x % fired == 0``
     """
-    logger = logging.getLogger('.'.join([__name__, 'action_fired']))
+    logger = logging.getLogger(_l(__name__, 'action_fired'))
     if isinstance(fired, int):
         if fired < 1:
             logger.warn('Expect `fired` at least 1 if int but got {}; '
@@ -69,7 +71,7 @@ class CheckpointSaver(object):
         self.fired = action_fired(fired)
         self.checkpoint_tmpl = checkpoint_tmpl
         self.savedir = savedir
-        self._logger = logging.getLogger(type(self).__name__)
+        self._logger = logging.getLogger(_l(__name__, self))
 
     def __call__(self, progress):
         """
@@ -87,23 +89,24 @@ class CheckpointSaver(object):
             return tofile
 
 
-class CheckpointLoader(object):
-    def __init__(self, net: nn.Module, savedir: str,
-                 checkpoint_tmpl: str = 'checkpoint_{0}.pth',
-                 map_location: str = 'cpu'):
-        self.net = net
-        self.savedir = savedir
-        self.checkpoint_tmpl = checkpoint_tmpl
-        self.map_location = map_location
-        self._logger = logging.getLogger(type(self).__name__)
+def load_checkpoint(net: nn.Module, savedir: str, checkpoint_tmpl: str,
+                    progress: tuple, map_location: str = 'cpu') -> None:
+    """
+    Load checkpoint from file.
 
-    def __call__(self, progress):
-        checkpoint_name = self.checkpoint_tmpl.format(*progress)
-        fromfile = os.path.join(self.savedir, checkpoint_name)
-        state_dict = torch.load(fromfile, map_location=self.map_location)
-        self.net.load_state_dict(state_dict)
-        self._logger.debug('progress {} loaded from {}'
-                           .format(progress, fromfile))
+    :param net: network to load checkpoint
+    :param savedir: directory under which checkpoints are saved
+    :param checkpoint_tmpl: basename template of the checkpoint files
+    :param progress: which checkpoint file to load
+    :param map_location: where to load the weights
+    """
+    logger = logging.getLogger(_l(__name__, 'load_checkpoint'))
+    basename = checkpoint_tmpl.format(*progress)
+    fromfile = os.path.join(savedir, basename)
+    state_dict = torch.load(fromfile, map_location=map_location)
+    net.load_state_dict(state_dict)
+    logger.debug('progress {} loaded from {}'
+                 .format(progress, fromfile))
 
 
 class StatSaver(object):
@@ -131,7 +134,7 @@ class StatSaver(object):
         self.fired = action_fired(fired)
         self.statname_tmpl = statname_tmpl
         self.statdir = statdir
-        self.logger = logging.getLogger(type(self).__name__)
+        self.logger = logging.getLogger(_l(__name__, self))
 
     def __call__(self, progress, **stat_dict):
         """
@@ -147,35 +150,34 @@ class StatSaver(object):
             tofile = os.path.join(self.statdir, name)
             _stat_dict = {k: np.array(stat_dict[k]) for k in stat_dict}
             np.savez(tofile, **_stat_dict)
-            self.logger.debug(
-                    '{} written at progress {}'.format(tofile, progress))
+            self.logger.debug('{} written at progress "{}"'
+                              .format(tofile, progress))
             return tofile
 
 
-class StatLoader(object):
-    def __init__(self, statdir: str,
-                 statname_tmpl: str = 'stats_{0}.npz'):
-        """
-        :param statdir: the directory under which to write statistics npz
-               files; if not exists, it will be created automatically
-        :param statname_tmpl: the stat npz file basename template
-               (by ``str.format``)
-        :param statname_pattern: the stat npz file basename regex pattern;
-               required if
-        :param betterthan:
-        """
-        self.statdir = statdir
-        self.statname_tmpl = statname_tmpl
-        self._logger = logging.getLogger(type(self).__name__)
+def load_stat(statdir: str, statname_tmpl: str, progress: tuple,
+              key: str = None) -> Union[Dict[str, np.ndarray], np.ndarray]:
+    """
+    Load statistics.
 
-    def __call__(self, progress) -> Dict[str, np.ndarray]:
-        statname = self.statname_tmpl.format(*progress)
-        fromfile = os.path.join(self.statdir, statname)
-        data = np.load(fromfile)
-        self._logger.debug('progress {} loaded from {}'
-                           .format(progress, fromfile))
+    :param statdir: directory under which the statistics are saved
+    :param statname_tmpl: stat file basename template
+    :param progress: which stat file to load
+    :param key: which field to load
+    :return: the npz content dict if ``key`` is not specified, otherwise the
+             corresponding field data
+    """
+    logger = logging.getLogger(_l(__name__, 'load_stat'))
+    basename = statname_tmpl.format(*progress)
+    fromfile = os.path.join(statdir, basename)
+    data = np.load(fromfile)
+    logger.debug('progress {} loaded from "{}"'
+                 .format(progress, fromfile))
+    if key is None:
         data = {k: data[k] for k in data.keys()}
-        return data
+    else:
+        data = data[key]
+    return data
 
 
 class BasicTrainer(object):
@@ -345,7 +347,7 @@ class BasicTrainer(object):
         pass
 
     def run(self):
-        logger = logging.getLogger(type(self).__name__ + '.run')
+        logger = logging.getLogger(_l(__name__, self, 'run'))
         logger.debug('Initializing')
         self.setup()
 
@@ -390,7 +392,7 @@ class BasicTrainer(object):
 
     # noinspection PyUnresolvedReferences
     def _organize_stats(self, stats: Tuple[Any]) -> dict:
-        logger = logging.getLogger(type(self).__name__ + '._organize_stats')
+        logger = logging.getLogger(_l(__name__, self, '_organize_stats'))
         try:
             stat_names = self.stat_names
         except AttributeError:
