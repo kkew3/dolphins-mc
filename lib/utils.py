@@ -186,3 +186,27 @@ def browadcast_value2list(value: Any, iterable: Iterable) -> Iterable:
     [(4, 2), (4, 3), (4, 5)]
     """
     return map(lambda x: (value, x), iterable)
+
+
+def loggername(module_name, *args):
+    """
+    Get hierarchical logger name.
+
+    Usage::
+
+        .. code-block:: python
+
+            loggername(__name__)
+            loggername(__name__, self)
+            loggername(__name__, 'function_name')
+            loggername(__name__, self, 'method_name')
+    """
+    tokens = [module_name]
+    if len(args) > 0:
+        if isinstance(args[0], str):
+            tokens.append(args[0])
+        else:
+            tokens.append(type(args[0]).__name__)
+    if len(args) > 1:
+        tokens.append(args[1])
+    return '.'.join(tokens)
