@@ -1,7 +1,9 @@
 import numpy as np
 import torch
+import torchvision.transforms as trans
+import utils
+from PIL import Image
 from scipy.ndimage import filters
-from typing import Sequence, Callable
 
 
 class DeNormalize(object):
@@ -173,3 +175,67 @@ def rearrange_temporal_batch(data_batch: torch.Tensor, T: int) -> torch.Tensor:
 
 def clamp_tensor_to_image(tensor: torch.Tensor):
     return torch.clamp(tensor, 0.0, 1.0)
+
+
+class BWCAEPreprocess(object):
+    """
+    The pre-processing transform before an autoregressive/autoencoding model
+    of encode-edecoder architecture that accepts grayscale images as inputs.
+
+    Steps:
+
+        1. convert RGB to B&W by taking the maximum along the channel axis
+        2. downsample by specified scale
+        3. random crop a little bit such that the height and the width are
+           both powers of the subsequent pooling scale
+        4. normalize the image matrix
+        5. optionally convert B&W back to RGB by repeating the image matrix
+           three times along the channel axis
+    """
+    def __init__(self, normalize: trans.Normalize, pool_scale: int = 1,
+                 downsample_scale: int = 1, to_rgb: bool = False):
+        """
+        :param normalize: the normalization transform
+        :param pool_scale: the overall scale of the pooling operations in
+               subsequent encoder; the image will be cropped to (H', W') where
+               H' and W' are the nearest positive integers to H and W that are
+               the power of ``pool_scale``, so that ``unpool(pool(x))`` is of
+               the same shape as ``x``
+        :param downsample_scale: the scale to downsample the video frames
+        :param to_rgb: if True, at the last step convert from B&W image to
+               RGB image
+        """
+        self.totensor = trans.ToTensor()
+        self.normalize = normalize
+        self.pool_scale = pool_scale
+        self.downsample_scale = downsample_scale
+        self.to_rgb = to_rgb
+
+    def __call__(self, img: np.ndarray) -> torch.Tensor:
+        """
+        :param img: image of shape (H, W, C)
+        :return: tensor of shape (1, H, W) if ``to_rgb`` is ``False``, else
+                 of shape (3, H, W)
+        """
+        h, w = img.shape[:2]
+        sh_after_ds = h // self.downsample_scale, w // self.downsample_scale
+        gray = Image.fromarray(img.max(axis=2))
+        try:
+            _ = self.downsample
+        except AttributeError:
+            self.downsample = trans.Resize(sh_after_ds)
+        gray = self.downsample(gray)
+        try:
+            _ = self.crop
+        except AttributeError:
+            gh, gw = gray.height, gray.width
+            gh = utils.inf_powerof(gh, self.pool_scale)
+            gw = utils.inf_powerof(gw, self.pool_scale)
+            self.crop = trans.RandomCrop((gh, gw))
+        gray = self.crop(gray)
+        tensor = self.totensor(gray)
+        tensor = self.normalize(tensor)
+        assert tensor.size(0) == 1 and len(tensor.size()) == 3
+        if self.to_rgb:
+            tensor = tensor.repeat(3, 1, 1)
+        return tensor
