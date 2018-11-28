@@ -1,6 +1,7 @@
 import importlib
 import os
 from typing import Tuple, Sequence, List, Iterable
+import logging
 
 import torch
 from more_sampler import SlidingWindowBatchSampler
@@ -10,6 +11,7 @@ import vmdata
 from more_trans import rearrange_temporal_batch, DeNormalize, clamp_tensor_to_image
 from torch import nn
 from torch.utils.data import DataLoader
+from utils import loggername
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -18,6 +20,10 @@ from grplaincae.basicmodels import Autoencoder, SpatioTemporalInputShape
 from trainlib import load_checkpoint
 
 unit_figsize = (6, 4)
+
+
+def _l(*args):
+    return logging.getLogger(loggername(__name__, *args))
 
 
 def load_trained_net(model_name: str, savedir: str, progress: Tuple[int, int]):
@@ -118,11 +124,12 @@ def visualize(todir: str, root: str, transform, normalize_stats,
               indices: Sequence[int],
               net: nn.Module, net_module,
               temperature: float = 1.0,
+              bwth: float = None,
               device: str = 'cpu',
               batch_size: int = 1,
               predname_tmpl: str = 'pred{}.png',
               attnname_tmpl: str = 'attn{}_pred{}.png') -> None:
-    """
+    r"""
     Visualize predictions and input gradients.
 
     :param todir: directory under which to save the visualization
@@ -135,6 +142,12 @@ def visualize(todir: str, root: str, transform, normalize_stats,
            ``load_trained_net``
     :param temperature: the larger it is, the more contrast in the attention
            map is
+    :param bwth: if not specified, plot the attention map as sigmoidal map,
+           where 0.5 means zero gradient, and :math:`0.5 \pn 0.5` means
+           positive and negative gradients respectively; if specified as a
+           range [0.0, 1.0], get the absolute value of the gradient, multiply
+           float in by ``temperature``, take the sigmoid, and remove all values
+           lower than the ``bwth`` threshold
     :param device: where to do inference
     :param batch_size: batch size when doing inference; will be set to 1 if
            ``device`` is 'cpu'
@@ -142,6 +155,10 @@ def visualize(todir: str, root: str, transform, normalize_stats,
     :param attnname_tmpl: the basename template of attention (inputs gradient)
            visualization
     """
+    if bwth is not None and not (0.0 <= bwth <= 1.0):
+        raise ValueError('bwth must be in range [0,1], but got {}'
+                         .format(bwth))
+    logger = _l('visualize')
     tbatch_size = net_module.temporal_batch_size
     if device == 'cpu':
         batch_size = 1
@@ -168,7 +185,27 @@ def visualize(todir: str, root: str, transform, normalize_stats,
             outputs = net(inputs)
             loss = mse(outputs, targets)
             loss.backward()
-            attns = sigmoid(inputs.grad * temperature)
+            attns = inputs.grad * temperature
+
+            logger.info('[f{}-{}/eval/attn] l1norm={} l2norm={} numel={} max={}'
+                        .format(np.min(iframes),
+                                np.max(iframes),
+                                torch.norm(attns.detach(), 1).item(),
+                                torch.norm(attns.detach(), 2).item(),
+                                torch.numel(attns.detach()),
+                                torch.max(attns.detach())))
+            logger.info('[f{}-{}/eval/loss] mse={} B={}'
+                        .format(np.min(iframes),
+                                np.max(iframes),
+                                loss.item(),
+                                targets.size(0)))
+
+            if bwth is not None:
+                attns = sigmoid(torch.abs(attns)) * 2 - 1
+                mask = (attns >= bwth).to(attns.dtype)
+                attns = mask * attns
+            else:
+                attns = sigmoid(attns)
 
             inputs, attns, outputs, targets = postprocess(
                     inputs, attns, outputs, targets,
