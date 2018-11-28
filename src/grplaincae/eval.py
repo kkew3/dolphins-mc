@@ -1,5 +1,8 @@
 #!/usr/bin/env python
-import pdb
+import logging
+logging.basicConfig(level=logging.INFO)
+logging.getLogger('filelock').setLevel(logging.WARNING)
+
 from configparser import ConfigParser
 import argparse
 import re
@@ -33,9 +36,6 @@ def parse_cfg(basedir: str, filename: str) -> SimpleNamespace:
     run_name = ini['model']['run_name'].strip()
     ns.savedir = os.path.join(basedir, '{}.{}'.format(run_name, runid), 'save')
     ns.progress = tuple(map(int, map(str.strip, ini['model']['progress'].split(','))))
-    ns.todir = os.path.join(basedir,
-                            '{}.{}.viz'.format(run_name, runid),
-                            '{}_{}'.format(*ns.progress))
     ns.visualize_indices = range(*tuple(map(int, map(
         str.strip, ini['eval']['indices'].split(',')))))
     try:
@@ -43,6 +43,15 @@ def parse_cfg(basedir: str, filename: str) -> SimpleNamespace:
     except (KeyError, ValueError):
         temperature = 1.0
     ns.temperature = temperature
+    try:
+        bwth = float(ini['eval']['bwth'].strip())
+    except (KeyError, ValueError):
+        bwth = None
+    ns.bwth = bwth
+    ns.todir = os.path.join(basedir,
+                            '{}.{}.viz'.format(run_name, runid),
+                            '{}_{}'.format(*ns.progress),
+                            't{:.2f}'.format(ns.temperature))
     try:
         device = ini['eval']['device'].strip()
     except KeyError:
@@ -66,9 +75,10 @@ def main():
     transform = BWCAEPreprocess(trans.Normalize(*normalize_stats),
                                 pool_scale=m.pool_scale,
                                 downsample_scale=ns.downsample_scale)
+    logging.info('Complete initialization: config={}'.format(ns))
     viz.visualize(ns.todir, ns.root, transform, normalize_stats,
                   ns.visualize_indices, net, m, temperature=ns.temperature,
-                  device=ns.device, batch_size=ns.batch_size)
+                  bwth=ns.bwth, device=ns.device, batch_size=ns.batch_size)
 
 
 if __name__ == '__main__':
