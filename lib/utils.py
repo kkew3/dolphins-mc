@@ -51,7 +51,7 @@ def frameiter(cap: cv2.VideoCapture, n: Optional[int]=None, rgb: bool=True):
     :param cap: the video capture object
     :param n: at most this number of frames are to be yielded; ``n`` should be
            a nonnegative integer
-    :param numpy: True to returns array with color channel RGB, otherwise BGR
+    :param rgb: True to returns array with color channel RGB, otherwise BGR
     :return: the frames in numpy array
     """
     if n is None:
