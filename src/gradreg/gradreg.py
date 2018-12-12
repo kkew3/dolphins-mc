@@ -41,7 +41,8 @@ def no_grad_params(m: Optional[nn.Module]=None,
 
 
 @contextlib.contextmanager
-def gradreg(inputs, strength=0.0, reg_method=None, train=True):
+def gradreg(inputs, strength=0.0, reg_method=None, train=True,
+            normalize_wrt_batch=False):
     r"""
     Apply gradient regularization loss to a provided loss function. Denote the
     loss function (including the network itself), parameterized by
@@ -87,6 +88,9 @@ def gradreg(inputs, strength=0.0, reg_method=None, train=True):
            regularization loss; default to L1 norm
     :param train: when set to ``False``, do not create graph for 2nd order
            derivative
+    :param normalized_wrt_batch: ``True`` to normalize the gradient
+           regularization by the batch size of ``inputs``; this argument will
+           be ignored when ``reg_method`` is not ``None``
 
     Pseudocode usage when ``train=False``::
 
@@ -139,6 +143,8 @@ def gradreg(inputs, strength=0.0, reg_method=None, train=True):
             gp = reg_method(dx)
         else:
             gp = torch.norm(dx, p=1)
+            if normalize_wrt_batch:
+                gp = gp / inputs.size(0)
         inputs.requires_grad = xrg
         setattr(ns, yattr, y + strength * gp)
     finally:
