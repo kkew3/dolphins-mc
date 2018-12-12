@@ -228,7 +228,7 @@ class BasicTrainer(object):
         ``type(self).timestamp_format``.
         """
         return 'runs-{}'.format(datetime.today().strftime(
-                type(self).timestamp_format))
+            type(self).timestamp_format))
 
     # noinspection PyUnresolvedReferences,PyAttributeOutsideInit
     def init_monitors(self):
@@ -237,28 +237,36 @@ class BasicTrainer(object):
         ``__init__``.
         """
         basedir = self.basedir if hasattr(
-                self, 'basedir') else self.default_basedir
+            self, 'basedir') else self.default_basedir
         defaults = {
-            'statdir': os.path.join(basedir, 'stat'),
-            'savedir': os.path.join(basedir, 'save'),
-            'fired': (lambda progress: True),
+            'statdir'     : os.path.join(basedir, 'stat'),
+            'savedir'     : os.path.join(basedir, 'save'),
+            'fired'       : (lambda progress: True),
             'statdir_eval': os.path.join(basedir, 'stat_eval'),
-            'fired_eval': (lambda progress: True),
+            'fired_eval'  : (lambda progress: True),
         }
         for k, v in defaults.items():
             if not hasattr(self, k):
                 setattr(self, k, v)
 
-        # deferred instantiation
-        self._statsaver = lambda: StatSaver(self.statdir, fired=self.fired,
-                                            statname_tmpl='stats_{0}_{1}.npz')
-        self._checkpointsaver = lambda: CheckpointSaver(self.net, self.savedir, fired=self.fired,
-                                                        checkpoint_tmpl='checkpoint_{0}_{1}.pth')
-        self._statsaver_eval = lambda: StatSaver(self.statdir_eval, fired=self.fired_eval,
-                                                 statname_tmpl='stats_{0}_{1}.npz')
         self.statsaver = None
         self.checkpointsaver = None
         self.statsaver_eval = None
+
+    def _statsaver(self):
+        """Used in deferred instantiation"""
+        return StatSaver(self.statdir, fired=self.fired,
+                         statname_tmpl='stats_{0}_{1}.npz')
+
+    def _checkpointsaver(self):
+        """Used in deferred instantiation"""
+        return CheckpointSaver(self.net, self.savedir, fired=self.fired,
+                               checkpoint_tmpl='checkpoint_{0}_{1}.pth')
+
+    def _statsaver_eval(self):
+        """Used in deferred instantiation"""
+        return StatSaver(self.statdir_eval, fired=self.fired_eval,
+                         statname_tmpl='stats_{0}_{1}.npz')
 
     def train_once(self, inputs, targets) -> tuple:
         """
