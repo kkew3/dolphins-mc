@@ -260,7 +260,7 @@ class BasicTrainer(object):
         self.checkpointsaver = None
         self.statsaver_eval = None
 
-    def train_once(self, inputs, targets) -> Tuple[Any]:
+    def train_once(self, inputs, targets) -> tuple:
         """
         Train for one minibatch. The return type of this method should be the
         same as that of ``validate_once``.
@@ -271,7 +271,7 @@ class BasicTrainer(object):
         """
         raise NotImplementedError()
 
-    def eval_once(self, inputs, targets) -> Tuple[Any]:
+    def eval_once(self, inputs, targets) -> tuple:
         """
         Evaluate (in validation set) for one (mini)batch. The return type of
         this method should be the same as that of ``train_once``.
