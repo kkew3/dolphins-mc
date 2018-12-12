@@ -131,7 +131,7 @@ def gradreg(inputs, strength=0.0, reg_method=None, train=True):
             raise ValueError('Exactly one attribute needs to be assigned')
         yattr = next(iter(ns.__dict__))
         y = getattr(ns, yattr)
-        if len(y.size()):
+        if torch.numel(y) > 1:
             raise ValueError('Expected {} to be scalar, but of shape {}'
                              .format(yattr, y.size()))
         dx = grad(y, [inputs], create_graph=train)[0]
