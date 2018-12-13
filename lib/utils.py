@@ -1,9 +1,10 @@
 """
 Global library for other dedicated library or project/branch-specific codes.
 """
-
+import itertools
 import os
 import sys
+import torch
 from contextlib import contextmanager
 import multiprocessing
 
@@ -42,7 +43,7 @@ def videowritercontext(filename, fourcc, fps, wh):
         writer.release()
 
 
-def frameiter(cap: cv2.VideoCapture, n: Optional[int]=None, rgb: bool=True):
+def frameiter(cap: cv2.VideoCapture, n: int = None, rgb: bool = True):
     """
     Yield frames in numpy array of shape (H, W, 3) where '3' stands for RGB, 'H'
     the height and 'W' the width. The number of frames is at most ``n``. If
@@ -66,7 +67,7 @@ def frameiter(cap: cv2.VideoCapture, n: Optional[int]=None, rgb: bool=True):
         if not s:
             break
         yielded_count += 1
-        if rgb:
+        if len(f.shape) == 3 and f.shape[2] == 3 and rgb:
             f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
         yield f
 
@@ -94,6 +95,7 @@ def aligned_enum(max_count):
 
     def _aligned_enum(t):
         return str(t[0]).rjust(width, '0'), t[1]
+
     return _aligned_enum
 
 
@@ -105,6 +107,7 @@ def suppress_stdout():
             yield
         finally:
             sys.stdout = old_stdout
+
 
 @contextmanager
 def memmapcontext(filename, dtype, shape, offset=0, mode='r'):
@@ -144,10 +147,12 @@ def fcompose(funcs: Sequence[Callable]) -> Callable:
 
     :return: the functional composition
     """
+
     def _wrapped(arg):
         for f in funcs:
             arg = f(arg)
         return arg
+
     return _wrapped
 
 
@@ -165,10 +170,12 @@ def fstarcompose(funcs) -> Callable:
 
     :return: the functional composition
     """
+
     def _wrapped(*args):
         for f in funcs:
             args = f(*args)
         return args
+
     return _wrapped
 
 
@@ -210,3 +217,29 @@ def loggername(module_name, *args):
     if len(args) > 1:
         tokens.append(args[1])
     return '.'.join(tokens)
+
+
+def jacobian(outputs: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
+    """
+    Compute the Jacobian tensor. The returned tensor is placed on the same
+    device as ``inputs``.
+
+    :param outputs:
+    :param inputs: ``inputs.requires_grad`` must be ``True``
+    :return: a tensor of shape ``outputs.shape + inputs.shape``, such that
+             for each ``coor``, ``inputs[coor]`` is the gradient of
+             ``outputs[coor]``, where ``coor`` is a coordinate tuple of length
+             ``len(outputs.size())``
+
+    >>> x = torch.rand(3, 5, 2)
+    >>> a = list(itertools.product(*map(range, x.size())))
+    >>> b = list(itertools.product(range(3), range(5), range(2)))
+    >>> a == b
+    True
+    >>> type(a)
+    tuple
+    """
+    gradmaps = torch.zeros(*(outputs.size() + inputs.size())).to(inputs.device)
+    for coor in itertools.product(*map(range, outputs.size())):
+        gradmaps[coor].copy_(torch.autograd.grad(outputs[coor], inputs))
+    return gradmaps
