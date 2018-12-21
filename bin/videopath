@@ -1,0 +1,34 @@
+#!/bin/bash
+show_help() {
+	echo "Usage: videopath DAY CHANNEL START_HOUR"
+	echo "Usage: videopath CHANNEL START_HOUR"
+}
+
+videodir="$PROJ_HOME/res/videos"
+
+rjust2() {
+	if [ -z "$1" ]; then
+		echo "00"
+	elif [ "$1" -lt 10 ]; then
+		echo "0$1"
+	else
+		echo "$1"
+	fi
+}
+
+if [ "$1" = "-h" -o "$1" = "--help" ]; then
+	show_help
+	exit 0
+elif [ -n "$3" ]; then
+	day="$1"
+	ch="$2"
+	sthour="$3"
+	echo "$videodir/${day}Feb13.${sthour}to$((${sthour}+3))/[CH$(rjust2 "$ch")]$(rjust2 "$sthour")_00_00.avi"
+elif [ -n "$2" ]; then
+	ch="$1"
+	sthour="$2"
+	echo "$videodir/[CH$(rjust2 "$ch")]$(rjust2 "$sthour")_00_00.avi"
+else
+	show_help
+	exit 1
+fi
