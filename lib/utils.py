@@ -241,5 +241,5 @@ def jacobian(outputs: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
     """
     gradmaps = torch.zeros(*(outputs.size() + inputs.size())).to(inputs.device)
     for coor in itertools.product(*map(range, outputs.size())):
-        gradmaps[coor].copy_(torch.autograd.grad(outputs[coor], inputs))
+        gradmaps[coor].copy_(torch.autograd.grad(outputs[coor], inputs)[0])
     return gradmaps
