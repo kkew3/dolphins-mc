@@ -1,6 +1,7 @@
 pytorch.rt/
 rt/
 res/
+doc/
 test-res/
 .data/
 .assets/
@@ -8,13 +9,20 @@ test-res/
 .vscode/
 .idea/
 
-# temporary files
+build.xml
+.ant-targets-build.xml
 __pycache__
 *.tmp
 *.pyc
 *.sav
 *.swp
 *.bak
+
+# experiments not intended for display
+experiments/ipynb/*.py
+experiments/ipynb/Makefile*
+experiments/src/
+
 
 # (large) data files or archives
 *.result
@@ -64,12 +72,3 @@ _*.sed
 
 # cloned repo (as reference)
 src/prednet_ref1_pytorch/
-
-# logs
-lib/.vmdata.log
-
-# auxiliary files
-build.xml
-.ant-targets-build.xml
-experiments/*.py
-experiments/Makefile*
