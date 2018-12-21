@@ -54,29 +54,28 @@ import hashlib
 import json
 import operator as op
 import os
+import pdb
 import re
 import shutil
 import logging
+import contextlib
 
 import cv2
 import numpy as np
 from cachetools import LRUCache
 from filelock import FileLock
 from torch.utils.data import Dataset
-from typing import Iterable, Iterator, List, Tuple
+from typing import Iterable, Iterator, List, Tuple, Union
 
 import utils
 from utils import loggername as _l
 
 _cd = os.path.dirname(os.path.realpath(__file__))
 
-
 HASH_ALGORITHM = 'sha1'
 DATABATCH_FILENAME_PAT = re.compile(r'^data_batch_(\d+)$')
-
-# str.format template
-# example: DEFAULT_DATASET_ROOTNAME_TMPL.format(8, (8, 0, 0))
-DEFAULT_DATASET_ROOTNAME_TMPL = 'CH{0:0>2}-{1[0]:0>2}_{1[1]:0>2}_{1[2]:0>2}'
+DATASETS_ROOT = os.path.join(os.path.normpath(os.environ['PYTORCH_DATA_HOME']),
+                             'mmdatasets')
 
 # npz file containing mean and std info of the dataset
 NORMALIZATION_INFO_FILE = 'nml-stat.npz'
@@ -131,6 +130,7 @@ def compute_file_integrity(filename):
             hashbuf.update(block)
     return hashbuf.hexdigest()
 
+
 def check_file_integrity(filename, expected_hex):
     """
     Check file integrity using HASH_ALGORITHM.
@@ -144,6 +144,7 @@ def check_file_integrity(filename, expected_hex):
     """
     actual_hex = compute_file_integrity(filename)
     return actual_hex == expected_hex
+
 
 def accumulate(iterable, func=op.add):
     """
@@ -182,6 +183,7 @@ def accumulate(iterable, func=op.add):
         total = func(total, element)
         yield total
 
+
 def compress_gzip(fromfile, tofile):
     """
     Compress a file into gzip file.
@@ -194,6 +196,7 @@ def compress_gzip(fromfile, tofile):
     with gzip.open(tofile, 'wb') as outfile:
         with open(fromfile, 'rb') as infile:
             shutil.copyfileobj(infile, outfile)
+
 
 def extract_gzip(fromfile, tofile):
     """
@@ -208,6 +211,7 @@ def extract_gzip(fromfile, tofile):
         with open(tofile, 'wb') as outfile:
             shutil.copyfileobj(infile, outfile)
 
+
 def get_dset_filename_by_ext(root, ext):
     """
     Returns the filename of the file under root whose name is the same as root.
@@ -221,10 +225,12 @@ def get_dset_filename_by_ext(root, ext):
     """
     return os.path.join(root, os.path.basename(root) + ext)
 
+
 class VideoDataset(Dataset):
     """
     Represents the video dataset (readonly).
     """
+
     def __init__(self, root, transform=None, max_mmap=1, max_gzcache=3):
         """
         :param root: the root directory of the dataset
@@ -273,7 +279,6 @@ class VideoDataset(Dataset):
         logger = logging.getLogger(_l(__name__, self, '__init__'))
         logger.info('Instantiated: root={}'.format(self.root))
 
-
     def __len__(self):
         """
         :return: the number of frames in the video
@@ -305,7 +310,7 @@ class VideoDataset(Dataset):
                     extract_gzip(self.batch_filename_by_id(batch_id, gzipped=True),
                                  batchf)
                     assert os.path.isfile(batchf), \
-                            '"{}" not found after decompressed'\
+                        '"{}" not found after decompressed' \
                             .format(batchf)
                 if not self.validated_batches[batch_id]:
                     if not check_file_integrity(batchf, self.expected_hexes[batch_id]):
@@ -316,7 +321,7 @@ class VideoDataset(Dataset):
                         extract_gzip(self.batch_filename_by_id(batch_id, gzipped=True),
                                      batchf)
                         assert os.path.isfile(batchf), \
-                                '"{}" not found after decompressed'\
+                            '"{}" not found after decompressed' \
                                 .format(batchf)
                         if not check_file_integrity(batchf, self.expected_hexes[batch_id]):
                             logger.error('File integrity failed at "{}"; RuntimeError raised'.format(batchf))
@@ -496,8 +501,8 @@ def create_vdset(video_file, root, batch_size=1000, max_batches=None):
             frames = list(utils.frameiter(cap, batch_size))
 
     if max_batches is not None:
-        assert len(lens) == max_batches, 'len(lens) ({}) != max_batches ({})'\
-                .format(len(lens), max_batches)
+        assert len(lens) == max_batches, 'len(lens) ({}) != max_batches ({})' \
+            .format(len(lens), max_batches)
 
     checksumfile = get_dset_filename_by_ext(root, '.' + HASH_ALGORITHM)
     with open(checksumfile, 'w') as outfile:
@@ -505,18 +510,18 @@ def create_vdset(video_file, root, batch_size=1000, max_batches=None):
             outfile.write('  '.join(row) + '\n')
 
     metainfo = {
-        'lens': lens,
+        'lens'      : lens,
         'resolution': resolution,
-        'channels': channels,
-        'dimension': dimension,
-        'dtype': dtype,
+        'channels'  : channels,
+        'dimension' : dimension,
+        'dtype'     : dtype,
     }
     metafile = get_dset_filename_by_ext(root, '.json')
     with open(metafile, 'w') as outfile:
         json.dump(metainfo, outfile)
 
 
-def get_normalization_stats(root: str, bw: bool=False):
+def get_normalization_stats(root: str, bw: bool = False, tags=()):
     """
     Returns the normalization statistics (mean, std) in preprocessing step
     when loading the dataset. The normalization data presents in a ``npz``
@@ -537,31 +542,53 @@ def get_normalization_stats(root: str, bw: bool=False):
            normalization statistics (using
            ``$PROJECT_HOME/bin/compute-perch-stat.py``), put the result file
            to the root directory, before calling this function.
+    :param tags: a list of additional tags; ``bw=True`` implies
+           ``tags=['bw']``
     :return: the mean and std
     :rtype: Tuple[Tuple[float], Tuple[float]]
     """
-    filename = NORMALIZATION_INFO_FILE_BW if bw else NORMALIZATION_INFO_FILE
+    if bw:
+        tags = ['bw']
+    name, ext = os.path.splitext(NORMALIZATION_INFO_FILE)
+    filename = name + ''.join(['_{}'.format(t) for t in tags]) + ext
     data = np.load(os.path.join(root, filename))
     mean = tuple(map(float, data['mean']))
     std = tuple(map(float, data['std']))
     return mean, std
 
-def prepare_dataset_root(cam_channel, video_index):
+
+def dataset_root(cam_channel: int,
+                 video_index: Union[int, Tuple[int, int, int]],
+                 day: Union[int, str] = None) -> str:
     """
-    A convenient function to get the root directory of dataset of which the
-    name is named after DEFAULT_DATASET_ROOTNAME_TMPL and resides under
-    PYTORCH_DATA_HOME.
+    A convenient function to get the root directory under DATASETS_ROOT.
 
     :param cam_channel: the camera channel ID
-    :type cam_channel: int
-    :param video_index: the video index, a 3-tuple of integers
-    :type video_index: Tuple[int, int, int]
+    :param video_index: the video index, either a 3-tuple of integers, or
+           a single integer which will be expanded to a 3-tuple as
+           ``(video_index, 0, 0)``. The first element of the tuple represents
+           the starting hour of the video
+    :param day: the day, can be either a string represeting the full date,
+           e.g. '2Feb13', or an integer that will be expanded to '{day}Feb13'
     :return: the root directory
-    :rtype: str
     """
-    root = os.path.join(os.environ['PYTORCH_DATA_HOME'],
-                        DEFAULT_DATASET_ROOTNAME_TMPL.format(cam_channel,
-                                                             video_index))
+    if isinstance(video_index, int):
+        video_index = video_index, 0, 0
+    if isinstance(day, int):
+        day = '{}Feb13'.format(day)
+    # tmpl_nd.format(cam_channel, video_index)
+    tmpl_nd = '[CH{0:>02}]{1[0]:>02}_{1[1]:>02}_{1[2]:>02}'
+    # tmpl_d.format(cam_channel, video_index, video_index[0]+3, day)
+    tmpl_d = os.path.join('{3}.{1[0]}to{2}', tmpl_nd)
+
+    tokens = cam_channel, video_index
+    if day:
+        tokens += video_index[0] + 3, day
+        tmpl = tmpl_d
+    else:
+        tmpl = tmpl_nd
+    root = os.path.join(DATASETS_ROOT, tmpl.format(*tokens))
+
     if not os.path.isdir(root):
         raise ValueError('root "{}" is not an existing directory'
                          .format(root))
@@ -605,3 +632,65 @@ class LabelledVideoDataset(Dataset):
 
     def __getitem__(self, item):
         return self.vdset[item], self.labels[item]
+
+
+class GaussianMLENormalizedDataset(Dataset):
+    """
+    Remove most of the linear independence in the dataset using maximum
+    likelihood estimation by minimizing Gaussian error. Inside the
+    ``GaussianMLENormalizedDataset`` a ``VideoDataset`` instance serves as
+    the backend.
+
+    The pixels on the normalized frame will still be in range of [0, 255], of
+    type ``numpy.uint8``.
+
+    By default, the item returned by index ``i`` on
+    ``GaussianMLENormalizedDataset`` is the normalized version
+    of the item returned by index ``i + (window_size - 1) // 2`` on its
+    ``VideoDataset`` backend.
+    """
+
+    def __init__(self, window_size: int, backend: VideoDataset,
+                 transform=None, use_actual_index=False):
+        """
+        :param window_size: the window size of the Gaussian MLE range; should
+               be an odd positive integer at least 3
+        :param backend: the backend ``VideoDataset``
+        :param transform: the transform to be applied, default to ``None``
+        :param use_actual_index: True to index the frames by the actual
+               index used on ``VideoDataset`` backend. Default to ``False``.
+               Note that after setting to ``True``, all indices smaller than
+               ``(window_size - 1) // 2`` and larger than or equal to
+               ``len(self.backend) - (window_size - 1) // 2`` will lead to
+               ``IndexError``
+        """
+        if window_size % 2 == 0 or window_size < 3:
+            raise ValueError('Illegal window_size value: {}'
+                             .format(window_size))
+        self.halfw = (window_size - 1) // 2
+        self.use_actual_index = use_actual_index
+        self.transform = transform
+        self.backend = backend
+
+    def __len__(self):
+        return len(self.backend) - 2 * self.halfw + 1
+
+    def __getitem__(self, index: int):
+        if not self.use_actual_index:
+            index += self.halfw
+        bg = np.mean([self.backend[i]
+                      for i in range(index - self.halfw,
+                                     index + self.halfw + 1)],
+                     axis=0)
+        img = self.backend[index]
+        img = np.array((img - bg + 255) / 2, dtype=np.uint8)
+        if self.transform:
+            img = self.transform(img)
+        return img
+
+    def __enter__(self):
+        self.backend.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.backend.__exit__(exc_type, exc_val, exc_tb)
