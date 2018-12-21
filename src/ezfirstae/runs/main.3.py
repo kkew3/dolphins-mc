@@ -1,4 +1,4 @@
-# Lower initial learning rate than main.1.py
+# Lower initial learning rate than main.2.py
 import os
 
 _cd = os.path.dirname(os.path.realpath(__file__))
@@ -19,7 +19,7 @@ import ezfirstae.loaddata as ld
 import ezfirstae.train as train
 
 max_epoch = 1
-root = vmdata.prepare_dataset_root(9, (8, 0, 0))
+root = vmdata.dataset_root(9, (8, 0, 0))
 normalize = trans.Normalize(*vmdata.get_normalization_stats(root, bw=True))
 transform = ld.PreProcTransform(normalize, pool_scale=8, downsample_scale=3)
 statdir = 'stat.{}'.format(_rid)

@@ -59,7 +59,7 @@ def make_parser():
 
 def main():
     args = make_parser().parse_args()
-    root = vmdata.prepare_dataset_root(args.camera, (8, 0, 0))
+    root = vmdata.dataset_root(args.camera, (8, 0, 0))
     with vmdata.VideoDataset(root) as vdset:
         _analyze_flow = partial(analyze_flow, vdset)
         if args.debug:

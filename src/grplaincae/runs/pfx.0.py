@@ -11,7 +11,7 @@ from grplaincae.train import TrainOnlyAdamTrainer
 from more_trans import BWCAEPreprocess
 import grplaincae.models.wide_pred9_f1to8 as net_module
 
-root = vmdata.prepare_dataset_root(9, (8, 0, 0))
+root = vmdata.dataset_root(9, (8, 0, 0))
 downsample_scale = 3
 train_indices = range(10000)
 max_epoch = 2

@@ -30,7 +30,7 @@ def parse_cfg(basedir: str, filename: str) -> SimpleNamespace:
     ns = SimpleNamespace()
 
     camera_id = list(map(int, map(str.strip, ini['data']['camera'].split(','))))
-    ns.root = vmdata.prepare_dataset_root(camera_id[0], tuple(camera_id[1:4]))
+    ns.root = vmdata.dataset_root(camera_id[0], tuple(camera_id[1:4]))
     ns.downsample_scale = int(ini['data']['downsample_scale'].strip())
     ns.model_name = ini['model']['model_name'].strip()
     run_name = ini['model']['run_name'].strip()

@@ -9,7 +9,7 @@ import salicae
 
 
 if __name__ == '__main__':
-    root = vmdata.prepare_dataset_root(9, (8, 0, 0))
+    root = vmdata.dataset_root(9, (8, 0, 0))
     normalize = trans.Normalize(*vmdata.get_normalization_stats(root))
     dset = vmdata.VideoDataset(root, max_mmap=4, max_gzcache=10,
                                transform=trans.Compose([
