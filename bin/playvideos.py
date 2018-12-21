@@ -5,10 +5,14 @@ import os
 import sys
 import collections
 import re
-from typing import List, Iterator
+from typing import List, Iterator, Callable, Sequence
 
 import numpy as np
 import cv2
+from tqdm import tqdm
+
+import utils
+import exprlib
 
 try:
     from utils import frameiter
@@ -25,7 +29,8 @@ except ImportError:
 __description__ = '''
 Play videos synchronously with automatic window placement.
 
-Keymaps:
+Keymaps
+-------
 
     b) freeze the videos;
     c) continue playing the videos;
@@ -36,13 +41,63 @@ Keymaps:
     p) go to previous frame already played;
     r) go to the latest frame.
 
-Example:
+Example
+-------
 
-1. python playvideos.py -f video1 -l 0 0 -f video2 -l 0 1;
-2. find python playvideos.py -f - -l 2 x;
+Play `video1' and `video1' side-by-side:
+
+    python playvideos.py -f video1 -l 0 0 -f video2 -l 0 1;
+
+Arrange all AVI videos in two rows:
+
+    find . -name '*.avi' -print | python playvideos.py -f- -L 2 x
+
+Custom frame preprocessing routine
+----------------------------------
+
+Routines can be injected at runtime by giving python files defining them.
+The routines will be chained such that the result from the ith routine
+will be fed as input into the (i+1)th routine. Each file defines one and
+only one routine.
+
+Each file defining a routine must contain a function named `frame_processor`
+that expects no argument and returns a callable object, denoted as `fp`. The
+callable object should behave the same as the following function signature:
+
+    def fp(cl_frames: List[Tuple[Tuple[int, int], Optional[numpy.ndarray]]]) \\
+            -> List[Tuple[Tuple[int, int], Optional[numpy.ndarray]]]:
+        ...
+
+`cl_frames' is a list of tuples (cell_location, frame).
+For example,
+
+    [((0,0),frame1), ((0,1),frame2), ((1,0),frame3)]
+
+means frame1 at upper left, frame2 at upper right, frame3 at lower left,
+nothing (blank) at lower right. If `frame' is `None', then the cell
+located at `cell_location' is empty. For example,
+
+    [((0,0),frame1), ((0,1),frame2), ((1,0),frame3)]
+
+is equivalent to
+
+    [((0,0),frame1), ((0,1),frame2), ((1,0),frame3), ((1,1),None)]
+
+The returned value is of the same format
+as the input list, but does not necessarily maintain the same length.
+For example, given the input list
+
+    [((0,0),frame1), ((0,1),frame2)]
+
+the returned list can be
+
+    [((0,0),frame1'), ((0,1),frame2'), ((1,0),frame1), ((1,1),frame2)]
+
+
+                      == End of description ==
 '''
 
-_description = re.sub(r'[^\n ]\+', ' ', __description__)
+__description__ = __description__.strip()
 
 
 class VideoPlayer(object):
@@ -53,7 +108,8 @@ class VideoPlayer(object):
     """
 
     def __init__(self, *sources, colormode='gray', fps=6.0,
-                 margin=1, zip_policy='longest', rewind_limit=100):
+                 margin=1, zip_policy='longest', rewind_limit=100,
+                 frame_processors: Sequence[Callable] = ()) -> None:
         """
         :param sources: tuple(s) of ``(cell_location, frames)``, where
                ``cell_location`` is a int-tuple (x,y) indicating its cell
@@ -63,11 +119,20 @@ class VideoPlayer(object):
         :param margin: width of row/column margin in pixel
         :param zip_policy: either 'longest' or 'shortest'
         :param rewind_limit: maximum number of frames to rewind
+        :param frame_processor: a callable object that accepts a list of
+               tuples ``(cell_location, Optional[frame])`` and returns a list
+               of tuples of the same format, where ``None`` frame indicates
+               empty cell *throughout* the video (due to layout)
         """
         self.fps = fps
         self.colormode = colormode
         self.margin = margin
         self.zip_policy = zip_policy
+        if not frame_processors:
+            frame_processor = (lambda _: _)
+        else:
+            frame_processor = utils.fcompose(frame_processors)
+        self.frame_processor = frame_processor
 
         if len(set(x[0] for x in sources)) < len(sources):
             raise ValueError('cell location must be unique for each cell')
@@ -118,11 +183,12 @@ class VideoPlayer(object):
         return frames
 
     def _render_new(self):
-        frames = self._next_frames()
+        frames = self.frame_processor(self._next_frames())
         try:
             canvas = self._render_default()
         except AttributeError:
-            gp_shape = np.zeros((2,) + self.grid_shape, dtype=np.int64)
+            self.grid_shape_rt = tuple(1 + np.max([cl for cl, _ in frames], axis=0))
+            gp_shape = np.zeros((2,) + self.grid_shape_rt, dtype=np.int64)
             for (i, j), f in frames:
                 gp_shape[:, i, j] = (0, 0) if f is None else f.shape[:2]
             row_heights = np.cumsum(np.max(gp_shape[0], axis=1) + self.margin)
@@ -239,36 +305,42 @@ class VideoPlayer(object):
 
     @property
     def window_name(self):
-        return 'video {}x{}'.format(*self.grid_shape)
-
+        return 'video {}x{}'.format(*self.grid_shape_rt)
 
 
 def make_parser():
-    parser = argparse.ArgumentParser(description=_description)
+    parser = argparse.ArgumentParser(
+            description=__description__,
+            formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('-f', '--video-file', dest='videos',
                         metavar='VIDEO', action='append',
-                        help='the video(s) to play at sync; or "-" to read '
+                        help='the video(s) to play at sync; or `-\' to read '
                              'video filenames from stdin, one per line')
-    parser.add_argument('-l', '--location', nargs=2,
-                        metavar=('X', 'Y'), dest='locations',
-                        action='append',
-                        help='the ith location corresponds to the ith VIDEO; '
-                             'if VIDEO is specified as a single \'-\', then '
-                             'the first X Y pair will be interpreted as the '
-                             'grid dimension NROWS NCOLS, where at least '
-                             'one of the NROWS NCOLS must be integer, '
-                             'and \'X\' is interpreted as undefined '
-                             'dimension')
+    l_group = parser.add_argument_group('Layout specification')
+    l_group.add_argument('-L', '--grid-shape', metavar=('NROWS', 'NCOLS'),
+                         nargs=2, dest='grid_shape', default=(1, 1),
+                         help='the grid shape, default to 1 1, where at '
+                              'least one of NROWS '
+                              'and NCOLS should be a positive integer; the '
+                              'one that\'s not a positive integer will be '
+                              'regarded as undefined dimension; this option '
+                              'will be ignored unless `-l X Y\' is not '
+                              'specified')
+    l_group.add_argument('-l', '--location', nargs=2,
+                         metavar=('X', 'Y'), dest='locations',
+                         action='append',
+                         help='the ith location corresponds to the ith VIDEO')
 
     v_group = parser.add_argument_group('Video specification')
     v_group.add_argument('--fps', type=float, default=6.0,
                          help='the frame-per-second; default to %(default)s')
     v_group.add_argument('-c', '--color',
                          choices=['rgb', 'gray'], default='gray',
-                         help='rgb video or gray video')
+                         help='rgb video or gray video; '
+                              'default to %(default)s')
 
     fp_group = parser.add_argument_group('Frame processors')
-    fp_group.add_argument('-r', '--routine',
+    fp_group.add_argument('-r', '--routine', action='append', metavar='FILE',
                           help='file that defines a custom frame processor')
 
     b_group = parser.add_argument_group('Runtime behavior')
@@ -305,7 +377,11 @@ keymap = {
 
 
 def loop(player: VideoPlayer, paused=False, startat=0):
-    for _ in range(startat):
+    if startat < 500 or player.quiet:
+        _it = range(startat)
+    else:
+        _it = tqdm(range(startat), ascii=True, unit='fm')
+    for _ in _it:
         player.skip()
     if paused:
         player.pause()
@@ -325,6 +401,7 @@ def loop(player: VideoPlayer, paused=False, startat=0):
             reaction = keymap.get(key, 'do_nothing')
             getattr(player, reaction)()
         key = player.render()
+
 
 if __name__ == '__main__':
     args = make_parser().parse_args()
@@ -346,45 +423,48 @@ if __name__ == '__main__':
             if not args.quiet:
                 print('Expecting input from stdin', file=sys.stderr)
             sys.exit(1)
+    if args.locations:
+        if len(args.locations) < len(args.videos):
+            if not args.quiet:
+                print('Locations are not specified for some videos;'
+                      ' aborted', file=sys.stderr)
+            sys.exit(1)
+        for l, v in zip(args.locations, args.videos):
+            caps.append((l, cv2.VideoCapture(v)))
+    else:
+        nrows, ncols = args.grid_shape
         try:
-            nrows, ncols = args.locations[0]
-        except (TypeError, IndexError):
-            if len(args.videos) == 1:
-                nrows, ncols = 1, 1
-            else:
-                if not args.quiet:
-                    print('`-l NROWS NCOLS\' must be specified when `-f -\'',
-                          file=sys.stderr)
-                sys.exit(1)
+            nrows = int(nrows)
+        except (TypeError, ValueError):
+            ncols = int(ncols)
+            nrows = math.ceil(len(args.videos) / ncols)
         else:
             try:
-                nrows = int(nrows)
-            except (TypeError, ValueError):
                 ncols = int(ncols)
-                nrows = math.ceil(len(args.videos) / ncols)
-            else:
-                try:
-                    ncols = int(ncols)
-                except (TypeError, ValueError):
-                    ncols = math.ceil(len(args.videos) / nrows)
+            except (TypeError, ValueError):
+                ncols = math.ceil(len(args.videos) / nrows)
         for i, v in enumerate(args.videos):
             caps.append(((i // ncols, i % ncols), cv2.VideoCapture(v)))
-    else:
-        if args.locations is None or len(args.locations) < len(args.videos):
-            if len(args.videos) == 1:
-                caps.append(((0, 0), cv2.VideoCapture(args.videos[0])))
-            else:
-                if not args.quiet:
-                    print('Locations are not specified for some videos;'
-                          ' aborted', file=sys.stderr)
-                sys.exit(1)
-        else:
-            for l, v in zip(args.locations, args.videos):
-                caps.append((l, cv2.VideoCapture(v)))
     iters = [(tuple(map(int, l)), frameiter(cap, rgb=False))
              for l, cap in caps]
+    fproc = []
+    if args.routine:
+        for routine_file in args.routine:
+            with open(routine_file) as infile:
+                routine_src = infile.read()
+            routine_code = compile(routine_src, routine_file, 'exec')
+            _ns = {}
+            exec(routine_code, _ns)
+            try:
+                fproc.append(_ns['frame_processor']())
+            except (KeyError, TypeError):
+                print('Expecting function `frame_processor` in "{}" that '
+                      'returns the callable frame processor'
+                      .format(routine_file), file=sys.stderr)
+                raise
+
     player = VideoPlayer(*iters, colormode=args.color, fps=args.fps,
-                         rewind_limit=args.cache)
+                         rewind_limit=args.cache, frame_processors=fproc)
     player.quiet = args.quiet
     try:
         loop(player, paused=args.freeze_once_start,
