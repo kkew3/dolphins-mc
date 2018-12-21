@@ -26,6 +26,11 @@ class DeNormalize(object):
         tensor.add_(self.mean)
         return tensor
 
+    def __repr__(self):
+        return '{}(mean={}, std={})'.format(type(self).__name__,
+                                            tuple(self.mean.reshape(-1).tolist()),
+                                            tuple(self.std.reshape(-1).tolist()))
+
 
 class ResetChannel(object):
     """
