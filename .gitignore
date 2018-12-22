@@ -61,6 +61,7 @@ lib/pyflow/pyflow.cpp
 # but include test folder
 #*/test/
 src/ezfirstae/runs/experiments/
+test/lib/test_exprlib_H5ResultSaver.d/config.json
 
 # jupyter notebook checkpoint
 .ipynb_checkpoints
