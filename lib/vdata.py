@@ -1,8 +1,10 @@
 """
 Defines representing the video dataset class and related functions.
 
-@deprecated Please use ``vhdata`` instead.
+@deprecated Please use ``vhdata`` or ``vmdata`` instead.
 """
+
+print('Deprecated. Please use `vhdata` or `vmdata` instead')
 
 import json
 import multiprocessing
@@ -324,7 +326,7 @@ class VideoDatasetWriter(object):
         checksumfile = os.path.join(self.root,
                                     '.'.join([video_name,
                                               DATASET_HASH_ALGORITHM]))
-        # TODO
+        # _TODO (deprecated; maintenance suspended)
 
     @property
     def block_size(self):
