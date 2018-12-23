@@ -11,9 +11,14 @@ import collections
 import numpy as np
 import torch
 import torch.nn as nn
-from typing import Any, Union, Callable, Iterable, Tuple, Dict
+from typing import Any, Union, Callable, Iterable, Tuple, Dict, Sequence
 
-from utils import loggername as _l
+import utils
+from utils import loggername
+
+
+def _l(*args):
+    return logging.getLogger(loggername(__name__, *args))
 
 
 def action_fired(fired: Union[int, Callable[[Any], bool]]) -> Callable[[Any], bool]:
@@ -25,11 +30,11 @@ def action_fired(fired: Union[int, Callable[[Any], bool]]) -> Callable[[Any], bo
            ``fired`` is an int, then ``fired`` will be initialized to
            ``lambda x: x % fired == 0``
     """
-    logger = logging.getLogger(_l(__name__, 'action_fired'))
+    logger = _l('action_fired')
     if isinstance(fired, int):
         if fired < 1:
-            logger.warn('Expect `fired` at least 1 if int but got {}; '
-                        'converted to 1'.format(fired))
+            logger.warning('Expect `fired` at least 1 if int but got {}; '
+                           'converted to 1'.format(fired))
             fired = 1
 
         def _fired(progress: int):
@@ -37,6 +42,9 @@ def action_fired(fired: Union[int, Callable[[Any], bool]]) -> Callable[[Any], bo
 
         return _fired
     return fired
+
+
+def fired_always(progress): return True
 
 
 class CheckpointSaver(object):
@@ -71,7 +79,7 @@ class CheckpointSaver(object):
         self.fired = action_fired(fired)
         self.checkpoint_tmpl = checkpoint_tmpl
         self.savedir = savedir
-        self._logger = logging.getLogger(_l(__name__, self))
+        self.logger = _l(self)
 
     def __call__(self, progress):
         """
@@ -84,8 +92,8 @@ class CheckpointSaver(object):
             name = self.checkpoint_tmpl.format(*progress)
             tofile = os.path.join(self.savedir, name)
             torch.save(self.net.state_dict(), tofile)
-            self._logger.debug('{} written at progress {}'
-                               .format(tofile, progress))
+            self.logger.debug('{} written at progress {}'
+                              .format(tofile, progress))
             return tofile
 
 
@@ -100,10 +108,11 @@ def load_checkpoint(net: nn.Module, savedir: str, checkpoint_tmpl: str,
     :param progress: which checkpoint file to load
     :param map_location: where to load the weights
     """
-    logger = logging.getLogger(_l(__name__, 'load_checkpoint'))
+    logger = _l('load_checkpoint')
     basename = checkpoint_tmpl.format(*progress)
     fromfile = os.path.join(savedir, basename)
     state_dict = torch.load(fromfile, map_location=map_location)
+    net.to(map_location)
     net.load_state_dict(state_dict)
     logger.debug('progress {} loaded from {}'
                  .format(progress, fromfile))
@@ -134,7 +143,7 @@ class StatSaver(object):
         self.fired = action_fired(fired)
         self.statname_tmpl = statname_tmpl
         self.statdir = statdir
-        self.logger = logging.getLogger(_l(__name__, self))
+        self.logger = _l(self)
 
     def __call__(self, progress, **stat_dict):
         """
@@ -155,10 +164,80 @@ class StatSaver(object):
             return tofile
 
 
+class FieldChangedError(BaseException):
+    def __init__(self, original: Sequence[str], now: Sequence[str]):
+        super().__init__('Fields changed from {} to {}'
+                         .format(original, now))
+
+
+class CsvStatSaver(object):
+    """
+    Save scalar statistics as a single CSV file. The first line of the CSV
+    file will be fields. The first k columns of the first line will be the
+    values of ``progress`` at ``__call__``. These fields will be named
+    ``__0__``, ``__1__``, all the way to ``__k-1__``. ``progress`` must be
+    convertible to a tuple.
+    """
+
+    def __init__(self, statdir: str,
+                 statname: str = 'stats.csv',
+                 fired: Union[int, Callable[[Any], bool]] = 10):
+        """
+        :param statdir: the directory under which to write statistics npz
+               files; if not exists, it will be created automatically
+        :param statname: the base filename of the CSV file
+        :param fired: a callable that expects one argument and returns a bool
+               to indicate whether the checkpoint should be saved. If both
+               ``fired`` and ``progress`` is an int, then ``fired`` will be
+               initialized to ``lambda x: x % progress == 0``
+        """
+        statdir = os.path.normpath(statdir)
+        os.makedirs(statdir, exist_ok=True)
+
+        self.fired = action_fired(fired)
+        self.statdir = statdir
+        self.statfile = os.path.join(self.statdir, statname)
+        self.logger = _l(self)
+        self.fields = None
+
+    def __call__(self, progress, **stat_dict):
+        """
+        Save statistics, which are wrapped into numpy arrays, as needed.
+        Once instantiated, the keys of ``stat_dict`` must not be changed,
+        otherwise raising ``trainlib.FieldChangedError``
+
+        :param progress: see ``help(type(self).__init__)``
+        :param stat_dict: dict of floats i.e. the non-cumulative
+               *scalar* statistics at the progress
+        :return: the file written if fired; otherwise None
+        """
+        if self.fired(progress):
+            progressdata = [('__{}__'.format(k), v)
+                            for k, v in enumerate(tuple(progress))]
+            if len(set(stat_dict) & set(progressdata)):
+                raise ValueError('Duplicate fields: {}'
+                                 .format(set(stat_dict) & set(progressdata)))
+            if not self.fields:
+                self.fields = sorted(stat_dict)
+                fields = [k for k, _ in progressdata] + self.fields
+                with open(self.statfile, 'w') as outfile:
+                    outfile.write(','.join(fields) + '\n')
+                    self.logger.debug('{} created'.format(self.statfile))
+            else:
+                if sorted(stat_dict) != self.fields:
+                    raise FieldChangedError(self.fields, sorted(stat_dict))
+            row = ([str(v) for _, v in progressdata]
+                   + [str(float(stat_dict[k])) for k in self.fields])
+            with open(self.statfile, 'a') as outfile:
+                outfile.write(','.join(row) + '\n')
+                self.logger.debug('{} appended at progress "{}"'
+                                  .format(self.statfile, progress))
+
+
 def load_stat(statdir: str, statname_tmpl: str, progress: tuple,
               key: str = None) -> Union[Dict[str, np.ndarray], np.ndarray]:
     """
-    Load statistics.
+    Load statistics dumped by ``StatSaver``.
 
     :param statdir: directory under which the statistics are saved
     :param statname_tmpl: stat file basename template
@@ -167,7 +246,7 @@ def load_stat(statdir: str, statname_tmpl: str, progress: tuple,
     :return: the npz content dict if ``key`` is not specified, otherwise the
              corresponding field data
     """
-    logger = logging.getLogger(_l(__name__, 'load_stat'))
+    logger = _l('load_stat')
     basename = statname_tmpl.format(*progress)
     fromfile = os.path.join(statdir, basename)
     data = np.load(fromfile)
@@ -181,15 +260,57 @@ def load_stat(statdir: str, statname_tmpl: str, progress: tuple,
 
 
 class BasicTrainer(object):
-    timestamp_format = '%Y%m%d%H%M'  # e.g. 201811051438
+    """
+    Abstract class of a basic trainer that codes the general framework of
+    training a network. The class defines yet to be implemented callbacks
+    intended to be overridden in subclass. ``BasicTrainer`` is integrated
+    with the following functions:
 
-    def __init__(self, net: nn.Module, max_epoch: int = 1, device: str = 'cpu'):
+        - logging
+        - dump checkpoints (pth files)
+        - dump runtime statistics (csv file or npz files)
+        - resume training from epoch or minibatch
+    """
+
+    timestamp_format = '%Y%m%d%H%M'  # e.g. 201811051438
+    """
+    Used to name the default ``basedir``.
+    """
+
+    checkpoint_tmpl = 'checkpoint_{0}_{1}.pth'
+    """
+    Checkpoint pth file name template, accepting progress tuple ``(epoch_id,
+    minibatch_id)``.
+    """
+
+    statname_tmpl = 'stats_{0}_{1}.npz'
+    """
+    Statistics npz file name template, accepting progress tuple ``(epoch_id,
+    minibatch_id)``. Useful only if ``use_csv_statsaver`` is set ``False`` at
+    ``__init__``.
+    """
+
+    def __init__(self, net: nn.Module, max_epoch: int = 1,
+                 device: str = 'cpu', use_csv_statsaver: bool = False,
+                 progress: Tuple[int, int] = None):
         r"""
         :param net: the network to train
         :param max_epoch: maximum epoch to train, where an epoch is defined as
                a complete traversal of the underlying dataset
         :param device: where to train the network, choices:
                { cpu, cuda(:\d+)? }
+        :param use_csv_statsaver: if True, use ``CsvStatSaver`` instead of
+               ``StatSaver``; see ``help(CsvStatSaver)`` for detail of the
+               implications
+        :param progress: where to continue training, default to train from
+               scratch. When ``progress`` is not ``None``, denote it as
+               ``(E, B)``. The first checkpoint to be dumped by the trainer
+               would be ``(E+1, 0)``, and will overwrite existing npy
+               statistics and pth checkpoint files. However, when
+               ``use_csv_statsaver`` is ``True``, the old records in the
+               CSV file won't get overridden automatically. New records will
+               be appended directly, thereby rendering duplicate records,
+               if not cleaned up manually before training
 
         Guideline to override this method:
 
@@ -208,17 +329,22 @@ class BasicTrainer(object):
               ``(epoch_id, minibatch_id)`` and returns whether or not to
               trigger the saving after current (epoch, minibatch)
             - specify how the saving of statistics is triggered during
-              evaluation on validation set (``fired_eval``, definition the same
-              as ``fired``)
+              evaluation on validation set (``fired_eval``, definition the
+              same as ``fired``)
             - specify the statistics names (``stat_names``), in the same order
               as returned by either ``train_once`` or ``eval_once``; leaving
-              it as is makes the statistics anonymous
+              it as is makes the statistics anonymous. ``stat_names`` will be
+              used to name the statistics when dumping them to csv or npz
+              files.
         """
         self.device = device
-        self.net = net.to(device)
+        self.net = net
         self.max_epoch = max_epoch
         self.train_stages = ('train', 'eval')
         self.stage = None  # current training stage
+        self.use_csv_statsaver = use_csv_statsaver
+
+        self.progress = progress
 
     @property
     def default_basedir(self):
@@ -230,7 +356,23 @@ class BasicTrainer(object):
         return 'runs-{}'.format(datetime.today().strftime(
             type(self).timestamp_format))
 
-    # noinspection PyUnresolvedReferences,PyAttributeOutsideInit
+    def offset_epoch_count(self, epoch: int) -> int:
+        """
+        Used to offset the epoch id after loading a checkpoint. Since it's
+        difficult and not very necessary to checkpoint a sampler, the first
+        training epoch after loading checkpoint ``(E, ?)`` will be recorded
+        as the ``E+1`` epoch.
+
+        :param epoch: current epoch id without offsetting
+        :return: the offset epoch id
+        """
+        offset = 0
+        if self.progress is not None:
+            cpepoch, _ = self.progress
+            offset = cpepoch + 1
+        return offset
+
+    # noinspection PyAttributeOutsideInit
     def init_monitors(self):
         """
         Initialize CheckpointSaver and StatSaver as per settings in
@@ -241,9 +383,9 @@ class BasicTrainer(object):
         defaults = {
             'statdir'     : os.path.join(basedir, 'stat'),
             'savedir'     : os.path.join(basedir, 'save'),
-            'fired'       : (lambda progress: True),
+            'fired'       : fired_always,
             'statdir_eval': os.path.join(basedir, 'stat_eval'),
-            'fired_eval'  : (lambda progress: True),
+            'fired_eval'  : fired_always,
         }
         for k, v in defaults.items():
             if not hasattr(self, k):
@@ -253,20 +395,42 @@ class BasicTrainer(object):
         self.checkpointsaver = None
         self.statsaver_eval = None
 
+    def prepare_net(self):
+        """
+        Load checkpoint if ``progress`` is not ``None``, and move network to
+        train to the specified device.
+        """
+        if self.progress is not None:
+            logger = _l(self, 'prepare_net')
+            load_checkpoint(self.net, getattr(self, 'savedir'),
+                            type(self).checkpoint_tmpl, self.progress,
+                            map_location=self.device)
+            logger.info('Loaded checkpoint from progress {}'
+                        .format(self.progress))
+        self.net.to(self.device)
+
     def _statsaver(self):
         """Used in deferred instantiation"""
-        return StatSaver(self.statdir, fired=self.fired,
-                         statname_tmpl='stats_{0}_{1}.npz')
+        if self.use_csv_statsaver:
+            saver = CsvStatSaver(self.statdir, fired=self.fired)
+        else:
+            saver = StatSaver(self.statdir, fired=self.fired,
+                              statname_tmpl=type(self).statname_tmpl)
+        return saver
 
     def _checkpointsaver(self):
         """Used in deferred instantiation"""
         return CheckpointSaver(self.net, self.savedir, fired=self.fired,
-                               checkpoint_tmpl='checkpoint_{0}_{1}.pth')
+                               checkpoint_tmpl=type(self).checkpoint_tmpl)
 
     def _statsaver_eval(self):
         """Used in deferred instantiation"""
-        return StatSaver(self.statdir_eval, fired=self.fired_eval,
-                         statname_tmpl='stats_{0}_{1}.npz')
+        if self.use_csv_statsaver:
+            saver = CsvStatSaver(self.statdir_eval, fired=self.fired_eval)
+        else:
+            saver = StatSaver(self.statdir_eval, fired=self.fired_eval,
+                              statname_tmpl=type(self).statname_tmpl)
+        return saver
 
     def train_once(self, inputs, targets) -> tuple:
         """
@@ -340,27 +504,33 @@ class BasicTrainer(object):
 
     def setup(self):
         """
-        Callback before ``run`` and after ``__init__``. Default to initializing
-        checkpoing and statistics savers.
+        Callback before ``run`` and after ``__init__``. Default to:
+
+        - initializing checkpoing and statistics savers (``init_monitors``)
+        - loading the checkpoint (``prepare_net``)
         """
         self.init_monitors()
+        self.prepare_net()
 
-    def teardown(self, error=None):
+    def teardown(self, error: BaseException = None):
         """
         Callback before the return of ``run``, whether or not successful return
         or unsuccessful one.
 
-        :param error: the cause of the return, or ``None`` if there's no error
+        :param error: the cause of the return, or ``None`` if there's no
+               error. Note that when not None, it's not necessarily of exactly
+               type ``BaseException`` -- might be exception subclass of it
         """
         pass
 
     def run(self):
-        logger = logging.getLogger(_l(__name__, self, 'run'))
+        logger = _l(self, 'run')
         logger.debug('Initializing')
         self.setup()
 
         try:
             for epoch in range(self.max_epoch):
+                epoch = self.offset_epoch_count(epoch)
                 self.before_epoch()
                 for self.stage in self.train_stages:
                     if self.stage == 'train':
@@ -394,13 +564,14 @@ class BasicTrainer(object):
             logger.info('Returns successfully')
             self.teardown()
         except BaseException as err:
-            logger.error('Exception raised: {}'.format(err))
+            logger.error('Exception raised (of type {}): {}'
+                         .format(type(err).__name__, err))
             self.teardown(error=err)
             raise
 
     # noinspection PyUnresolvedReferences
     def _organize_stats(self, stats: Tuple[Any]) -> dict:
-        logger = logging.getLogger(_l(__name__, self, '_organize_stats'))
+        logger = _l('_organize_stats')
         try:
             stat_names = self.stat_names
         except AttributeError:
