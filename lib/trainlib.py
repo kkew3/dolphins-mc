@@ -1,13 +1,15 @@
 """
 Common training utilities
 """
-
+import contextlib
+import itertools
 import os
 import logging
 import re
 from datetime import datetime
 import collections
 
+import h5py
 import numpy as np
 import torch
 import torch.nn as nn
@@ -172,20 +174,21 @@ class FieldChangedError(BaseException):
 
 class CsvStatSaver(object):
     """
-    Save scalar statistics as a single CSV file. The first line of the CSV
-    file will be fields. The first k columns of the first line will be the
-    values of ``progress`` at ``__call__``. These fields will be named
-    ``__0__``, ``__1__``, all the way to ``__k-1__``. ``progress`` must be
-    convertible to a tuple.
+    Save scalar statistics as CSV files. To simplify design and
+    implementation, the ``progress`` is assumed to be 2-tuples of integers
+    ``(epoch, batch)``. The naming template (``str.format``) of the CSV files
+    should contain one argument for the epoch. Within each file, the first
+    column will be the batch id. The rest columns will be the scalar
+    statistics at each batch.
     """
 
     def __init__(self, statdir: str,
-                 statname: str = 'stats.csv',
+                 statname_tmpl: str = 'stats_{0}.csv',
                  fired: Union[int, Callable[[Any], bool]] = 10):
         """
         :param statdir: the directory under which to write statistics npz
                files; if not exists, it will be created automatically
-        :param statname: the base filename of the CSV file
+        :param statname_tmpl: the base filename of the CSV file
         :param fired: a callable that expects one argument and returns a bool
                to indicate whether the checkpoint should be saved. If both
                ``fired`` and ``progress`` is an int, then ``fired`` will be
@@ -196,13 +199,13 @@ class CsvStatSaver(object):
 
         self.fired = action_fired(fired)
         self.statdir = statdir
-        self.statfile = os.path.join(self.statdir, statname)
+        self.statename_tmpl = statname_tmpl
         self.logger = _l(self)
         self.fields = None
 
     def __call__(self, progress, **stat_dict):
         """
-        Save statistics, which are wrapped into numpy arrays, as needed.
+        Save statistics.
         Once instantiated, the keys of ``stat_dict`` must not be changed,
         otherwise raising ``trainlib.FieldChangedError``
 
@@ -212,26 +215,29 @@ class CsvStatSaver(object):
         :return: the file written if fired; otherwise None
         """
         if self.fired(progress):
-            progressdata = [('__{}__'.format(k), v)
-                            for k, v in enumerate(tuple(progress))]
-            if len(set(stat_dict) & set(progressdata)):
-                raise ValueError('Duplicate fields: {}'
-                                 .format(set(stat_dict) & set(progressdata)))
-            if not self.fields:
+            epoch, batch = progress
+            name = self.statename_tmpl.format(epoch)
+            tofile = os.path.join(self.statdir, name)
+            if self.fields is None:
                 self.fields = sorted(stat_dict)
-                fields = [k for k, _ in progressdata] + self.fields
-                with open(self.statfile, 'w') as outfile:
-                    outfile.write(','.join(fields) + '\n')
-                    self.logger.debug('{} created'.format(self.statfile))
+            elif self.fields != sorted(stat_dict):
+                raise FieldChangedError(self.fields, sorted(stat_dict))
+            values = [stat_dict[k] for k in self.fields]
+            try:
+                open(tofile).close()
+            except FileNotFoundError:
+                with open(tofile, 'w') as outfile:
+                    # write the CSV header
+                    outfile.write(','.join([''] + self.fields) + '\n')
+                    outfile.write(','.join(map(str, [batch] + values)) + '\n')
+                    self.logger.debug('{} written at progress "{}"'
+                                      .format(tofile, progress))
             else:
-                if sorted(stat_dict) != self.fields:
-                    raise FieldChangedError(self.fields, sorted(stat_dict))
-            row = ([str(v) for _, v in progressdata]
-                   + [str(float(stat_dict[k])) for k in self.fields])
-            with open(self.statfile, 'a') as outfile:
-                outfile.write(','.join(row) + '\n')
-                self.logger.debug('{} appended at progress "{}"'
-                                  .format(self.statfile, progress))
+                with open(tofile, 'a') as outfile:
+                    outfile.write(','.join(map(str, [batch] + values)) + '\n')
+                    self.logger.debug('{} appended at progress "{}"'
+                                      .format(tofile, progress))
+            return tofile
 
 
 def load_stat(statdir: str, statname_tmpl: str, progress: tuple,
