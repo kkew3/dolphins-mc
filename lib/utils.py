@@ -6,9 +6,8 @@ import os
 import sys
 import torch
 from contextlib import contextmanager
-import multiprocessing
 
-from typing import Optional, Callable, Sequence, Any, Iterable
+from typing import Callable, Sequence, Any, Iterable
 import numpy as np
 import cv2
 
