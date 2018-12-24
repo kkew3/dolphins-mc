@@ -49,7 +49,7 @@ class TrainOnlyAdamTrainer(BasicTrainer):
         self.batch_size = batch_size
 
         self.stat_names = ('loss',)
-        self.train_stages = ('train',)
+        self.run_stages = ('train',)
         self.train_batch_sampler_ = lambda: more_sampler.SlidingWindowBatchSampler(
                 self.trainset_indices, 1 + self.net_module.temporal_batch_size,
                 batch_size=batch_size, shuffled=(self.max_epoch > 1))
@@ -95,6 +95,7 @@ class TrainOnlyAdamTrainer(BasicTrainer):
         return ns.loss.item(),
 
     def teardown(self, error=None):
+        super().teardown(error)
         self.vdset.release_mmap()
     #
     # def predict(self, indices: Sequence[int], todir: str,
