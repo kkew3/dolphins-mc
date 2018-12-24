@@ -162,7 +162,7 @@ def get_runid_from_file(_file_: str, return_prefix=False) -> Union[str, Tuple[st
 
 
 def make_grid(images: Sequence[np.ndarray], layout: Sequence[Sequence[int]],
-              margin: int = 1) -> np.ndarray
+              margin: int = 1) -> np.ndarray:
     """
     Make a sequence of images into grid so that they can be plotted in one
     figure. The grid use matrix coordinate, 0-indexed.
@@ -226,8 +226,8 @@ class H5ResultSaver(object):
     automatically, use ``contextlib.closing`` on the ``H5ResultSaver`` object.
     """
 
-    #                               dtype shape
     DsSpec = collections.namedtuple('DsSpec', ('dt', 'sh'))
+    """Fields: (``dtype``, ``shape``)"""
 
     def __init__(self, filename, config, **kwargs):
         """
@@ -294,7 +294,8 @@ class H5ResultSaver(object):
             try:
                 ds = self.h5file[name]
             except KeyError:
-                ds = self.h5file.create_dataset(
+                # noinspection PyTypeChecker
+                self.h5file.create_dataset(
                     name, shape=(self.initlen,) + spec.sh,
                     dtype=spec.dt, chunks=True, maxshape=(None,) + spec.sh,
                     compression='gzip')
