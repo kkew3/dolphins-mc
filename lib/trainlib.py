@@ -45,6 +45,10 @@ def action_fired(fired: Union[int, Callable[[Any], bool]]) -> Callable[[Any], bo
 def fired_always(progress): return True
 
 
+def fired_batch(batch: int, progress: Tuple[int, int]):
+    return progress[1] % max(1, batch) == 0
+
+
 class CheckpointSaver(object):
     """
     Save checkpoint periodically.
@@ -464,8 +468,8 @@ class BasicTrainer(object):
         if not hasattr(self, 'basedir'):
             setattr(self, 'basedir', self.default_basedir)
         defaults_train = {
-            'statdir': 'stat',
-            'savedir': 'save',
+            'statdir': os.path.join(getattr(self, 'basedir'), 'stat'),
+            'savedir': os.path.join(getattr(self, 'basedir'), 'save'),
             'fired'  : fired_always,
         }
         for stage in self.run_stages:
@@ -476,7 +480,8 @@ class BasicTrainer(object):
             else:
                 if not hasattr(self, 'statdir_{}'.format(stage)):
                     setattr(self, 'statdir_{}'.format(stage),
-                            'stat_{}'.format(stage))
+                            os.path.join(getattr(self, 'basedir'),
+                                         'stat_{}'.format(stage)))
                 if not hasattr(self, 'fired_{}'.format(stage)):
                     setattr(self, 'fired_{}'.format(stage), fired_always)
 
@@ -486,12 +491,9 @@ class BasicTrainer(object):
         train to the specified device.
         """
         if self.progress is not None:
-            logger = _l(self, 'prepare_net')
             load_checkpoint(self.net, getattr(self, 'savedir'),
                             type(self).checkpoint_tmpl, self.progress,
                             map_location=self.device)
-            logger.info('Loaded checkpoint from progress {}'
-                        .format(self.progress))
         self.net.to(self.device)
 
     def freeze_net(self):
@@ -531,21 +533,21 @@ class BasicTrainer(object):
             setattr(self, 'checkpointsaver', saver)
         return saver
 
-    def _before_batch(self, stage):
+    def __before_batch(self, stage):
         """Call ``before_batch_STAGE``."""
         with contextlib.suppress(AttributeError):
             getattr(self, 'before_batch_{}'.format(stage))()
 
-    def _after_batch(self, stage):
+    def __after_batch(self, stage):
         """Call ``after_batch_STAGE``."""
         with contextlib.suppress(AttributeError):
             getattr(self, 'after_batch_{}'.format(stage))()
 
-    def _get_loader(self, stage):
+    def __get_loader(self, stage):
         """Call ``get_STAGEloader``."""
         return getattr(self, 'get_{}loader'.format(stage))()
 
-    def _once(self, stage, inputs, targets):
+    def __once(self, stage, inputs, targets):
         """Call ``STAGE_once``."""
         return getattr(self, '{}_once'.format(stage))(inputs, targets)
 
@@ -606,10 +608,10 @@ class BasicTrainer(object):
                                 and not self._frozen_always):
                             self.melt_net()
                         self.net.train()
-                        for batch, it in enumerate(self._get_loader(self.stage)):
+                        for batch, it in enumerate(self.__get_loader(self.stage)):
                             # `it` is `(inputs, targets)`
-                            self._before_batch(self.stage)
-                            stats = self._once(self.stage, *it)
+                            self.__before_batch(self.stage)
+                            stats = self.__once(self.stage, *it)
                             stats_to_log = self._organize_stats(stats)
                             logger.info('epoch{}/{} batch{}: {}'
                                         .format(rtepoch, self.stage, batch,
@@ -618,24 +620,24 @@ class BasicTrainer(object):
                             statsaver((rtepoch, batch), **stats_to_log)
                             checkpointsaver = self._checkpointsaver()
                             checkpointsaver((rtepoch, batch))
-                            self._after_batch(self.stage)
+                            self.__after_batch(self.stage)
                     else:
                         rtepoch = self.offset_epoch_count(epoch)
                         if (self.freeze_net_when_necessary
                                 and not self._frozen_always):
                             self.freeze_net()
                         self.net.eval()
-                        for batch, it in enumerate(self._get_loader(self.stage)):
+                        for batch, it in enumerate(self.__get_loader(self.stage)):
                             # `it` is `(inputs, targets)`
-                            self._before_batch(self.stage)
-                            stats = self._once(self.stage, *it)
+                            self.__before_batch(self.stage)
+                            stats = self.__once(self.stage, *it)
                             stats_to_log = self._organize_stats(stats)
                             logger.info('epoch{}/{} batch{}: {}'
                                         .format(rtepoch, self.stage, batch,
                                                 list(stats_to_log.items())))
                             statsaver = self._statsaver(self.stage)
                             statsaver((rtepoch, batch), **stats_to_log)
-                            self._after_batch(self.stage)
+                            self.__after_batch(self.stage)
                 self.after_epoch()
             logger.info('Returns successfully')
             self.teardown()
