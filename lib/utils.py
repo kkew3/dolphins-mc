@@ -219,13 +219,16 @@ def loggername(module_name, *args):
     return '.'.join(tokens)
 
 
-def jacobian(outputs: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
+def jacobian(outputs: torch.Tensor, inputs: torch.Tensor,
+             to_device: str = None) -> torch.Tensor:
     """
     Compute the Jacobian tensor. The returned tensor is placed on the same
     device as ``inputs``.
 
     :param outputs:
     :param inputs: ``inputs.requires_grad`` must be ``True``
+    :param to_device: where to put the gradients; default to the same device
+           as the inputs
     :return: a tensor of shape ``outputs.shape + inputs.shape``, such that
              for each ``coor``, ``inputs[coor]`` is the gradient of
              ``outputs[coor]``, where ``coor`` is a coordinate tuple of length
@@ -251,11 +254,27 @@ def jacobian(outputs: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
     >>> # there might be some error in hand-written expected tensor ...
     >>> bool(torch.max(torch.abs(gYgX - expected)) < 1e-4)
     True
+    >>> x = torch.tensor(0.2876, requires_grad=True)
+    >>> y = torch.sigmoid(x * x)
+    >>> x_ = x.detach()
+    >>> expected = torch.sigmoid(x_ * x_) * (1 - torch.sigmoid(x_ * x_)) * 2 * x_
+    >>> gygx = jacobian(y, x)
+    >>> torch.allclose(expected, gygx)
+    True
     """
-    gradmaps = torch.zeros(*(outputs.size() + inputs.size())).to(inputs.device)
-    coors = list(itertools.product(*map(range, outputs.size())))
-    n = len(coors)
-    for i, c in enumerate(coors):
-        gygx, = torch.autograd.grad(outputs[c], inputs, retain_graph=i < n - 1)
-        gradmaps[c].copy_(gygx)
+    if not to_device:
+        to_device = inputs.device
+
+    if not len(outputs.size()):
+        gradmaps = torch.empty_like(inputs, device=to_device)
+        gygx, = torch.autograd.grad(outputs, inputs)
+        gradmaps.copy_(gygx)
+    else:
+        gradmaps = torch.zeros(*(outputs.size() + inputs.size())).to(to_device)
+        coors = list(itertools.product(*map(range, outputs.size())))
+        n = len(coors)
+        for i, c in enumerate(coors):
+            gygx, = torch.autograd.grad(outputs[c], inputs, retain_graph=i < n - 1)
+            gradmaps[c].copy_(gygx)
+
     return gradmaps
