@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from typing import Callable, Sequence, Any, Iterable
 import numpy as np
 import cv2
+import collections
 
 
 @contextmanager
@@ -230,15 +231,31 @@ def jacobian(outputs: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
              ``outputs[coor]``, where ``coor`` is a coordinate tuple of length
              ``len(outputs.size())``
 
-    >>> x = torch.rand(3, 5, 2)
-    >>> a = list(itertools.product(*map(range, x.size())))
-    >>> b = list(itertools.product(range(3), range(5), range(2)))
-    >>> a == b
+    >>> M = torch.tensor([[0.0745, 0.4937],
+    ...                   [0.7884, 0.7944]])
+    >>> X = torch.tensor([[0.2161, 0.3782],
+    ...                   [0.9080, 0.2498]], requires_grad=True)
+    >>> Y = torch.mm(torch.t(X), torch.mm(M, X))
+    >>> gYgX = jacobian(Y, X)
+    >>> gYgX.size()
+    torch.Size([2, 2, 2, 2])
+    >>> expected = torch.tensor([
+    ...        [[[1.1963, 0.0000],
+    ...          [1.7197, 0.0000]],
+    ...         [[0.1515, 0.7320],
+    ...          [0.4966, 0.8280]]],
+    ...        [[[0.2251, 0.4644],
+    ...          [0.3852, 0.8917]],
+    ...         [[0.0000, 0.3766],
+    ...          [0.0000, 0.8818]]]])
+    >>> # there might be some error in hand-written expected tensor ...
+    >>> bool(torch.max(torch.abs(gYgX - expected)) < 1e-4)
     True
-    >>> type(a)
-    tuple
     """
     gradmaps = torch.zeros(*(outputs.size() + inputs.size())).to(inputs.device)
-    for coor in itertools.product(*map(range, outputs.size())):
-        gradmaps[coor].copy_(torch.autograd.grad(outputs[coor], inputs)[0])
+    coors = list(itertools.product(*map(range, outputs.size())))
+    n = len(coors)
+    for i, c in enumerate(coors):
+        gygx, = torch.autograd.grad(outputs[c], inputs, retain_graph=i < n - 1)
+        gradmaps[c].copy_(gygx)
     return gradmaps
