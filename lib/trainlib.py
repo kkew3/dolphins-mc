@@ -444,22 +444,6 @@ class BasicTrainer(object):
         return 'runs-{}'.format(datetime.today().strftime(
             type(self).timestamp_format))
 
-    def offset_epoch_count(self, epoch: int) -> int:
-        """
-        Used to offset the epoch id after loading a checkpoint. Since it's
-        difficult and not very necessary to checkpoint a sampler, the first
-        training epoch after loading checkpoint ``(E, ?)`` will be recorded
-        as the ``E+1`` epoch.
-
-        :param epoch: current epoch id without offsetting
-        :return: the offset epoch id
-        """
-        offset = 0
-        if self.progress is not None and self._trained_once:
-            cpepoch, _ = self.progress
-            offset = cpepoch + 1
-        return epoch + offset
-
     def init_monitors(self):
         """
         Initialize CheckpointSaver and StatSaver as per settings in
@@ -597,14 +581,27 @@ class BasicTrainer(object):
         logger.debug('Initializing')
         self.setup()
 
+        # Since it's uneasy and not necessary to train from exact batch of the
+        # loaded checkpoint, it will start training from the next epoch of the
+        # checkpoint epoch
+        if self.progress is not None:
+            cpepoch, _ = self.progress
+            epoch0 = cpepoch + 1
+            if epoch0 >= self.max_epoch:
+                logger.warning('No epoch left to run: current_epoch(1st)={} '
+                               'max_epoch={}'.format(epoch0, self.max_epoch))
+                self.teardown()
+                return
+        else:
+            epoch0 = 0
+
         try:
-            for epoch in range(self.max_epoch):
+            for epoch in range(epoch0, self.max_epoch):
                 self.before_epoch()
                 for self.stage in self.run_stages:
                     logger.debug('Begin stage {}'.format(self.stage))
                     if self.stage == 'train':
                         self._trained_once = True
-                        rtepoch = self.offset_epoch_count(epoch)
                         if (self.freeze_net_when_necessary
                                 and not self._frozen_always):
                             self.melt_net()
@@ -615,15 +612,14 @@ class BasicTrainer(object):
                             stats = self.__once(self.stage, *it)
                             stats_to_log = self._organize_stats(stats)
                             logger.info('epoch{}/{} batch{}: {}'
-                                        .format(rtepoch, self.stage, batch,
+                                        .format(epoch, self.stage, batch,
                                                 list(stats_to_log.items())))
                             statsaver = self._statsaver(self.stage)
-                            statsaver((rtepoch, batch), **stats_to_log)
+                            statsaver((epoch, batch), **stats_to_log)
                             checkpointsaver = self._checkpointsaver()
-                            checkpointsaver((rtepoch, batch))
+                            checkpointsaver((epoch, batch))
                             self.__after_batch(self.stage)
                     else:
-                        rtepoch = self.offset_epoch_count(epoch)
                         if (self.freeze_net_when_necessary
                                 and not self._frozen_always):
                             self.freeze_net()
@@ -634,10 +630,10 @@ class BasicTrainer(object):
                             stats = self.__once(self.stage, *it)
                             stats_to_log = self._organize_stats(stats)
                             logger.info('epoch{}/{} batch{}: {}'
-                                        .format(rtepoch, self.stage, batch,
+                                        .format(epoch, self.stage, batch,
                                                 list(stats_to_log.items())))
                             statsaver = self._statsaver(self.stage)
-                            statsaver((rtepoch, batch), **stats_to_log)
+                            statsaver((epoch, batch), **stats_to_log)
                             self.__after_batch(self.stage)
                 self.after_epoch()
             logger.info('Returns successfully')
