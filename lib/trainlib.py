@@ -555,13 +555,13 @@ class BasicTrainer(object):
         """
         Callback before each epoch.
         """
-        pass
+        _l(self, 'before_epoch').debug('')
 
     def after_epoch(self):
         """
         Callback after each epoch.
         """
-        pass
+        _l(self, 'after_epoch').debug('')
 
     def setup(self):
         """
@@ -601,6 +601,7 @@ class BasicTrainer(object):
             for epoch in range(self.max_epoch):
                 self.before_epoch()
                 for self.stage in self.run_stages:
+                    logger.debug('Begin stage {}'.format(self.stage))
                     if self.stage == 'train':
                         self._trained_once = True
                         rtepoch = self.offset_epoch_count(epoch)
