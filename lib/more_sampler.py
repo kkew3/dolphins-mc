@@ -91,7 +91,7 @@ class SlidingWindowBatchSampler(Sampler):
         ``[1, 2, 3, 4]`` and ``[4, 5, 6, 7]``, then the yielded hyper-batch
         will be ``[1, 2, 3, 4, 4, 5, 6, 7]``.
         """
-        indices = list(map(lambda x: x.astype(np.int64), np.array(indices)))
+        indices = [np.array(x, dtype=np.int64) for x in list(indices)]
         if indices and not len(indices[0].shape):
             indices = [np.array(indices)]
         self.indices = indices  # a list of int64-arrays, or an empty list
