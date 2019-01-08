@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import logging
 import argparse
 import math
 import os
@@ -83,9 +84,8 @@ is equivalent to
 
     [((0,0),frame1), ((0,1),frame2), ((1,0),frame3), ((1,1),None)]
 
-The returned value is of the same format
-as the input list, but does not necessarily maintain the same length.
-For example, given the input list
+The returned value is of the same format as the input list, but does not
+necessarily maintain the same length. For example, given the input list
 
     [((0,0),frame1), ((0,1),frame2)]
 
@@ -98,6 +98,10 @@ the returned list can be
 '''
 
 __description__ = __description__.strip()
+
+
+def identity_frame_processor(_):
+    return _
 
 
 class VideoPlayer(object):
@@ -129,7 +133,7 @@ class VideoPlayer(object):
         self.margin = margin
         self.zip_policy = zip_policy
         if not frame_processors:
-            frame_processor = (lambda _: _)
+            frame_processor = identity_frame_processor
         else:
             frame_processor = utils.fcompose(frame_processors)
         self.frame_processor = frame_processor
@@ -180,10 +184,11 @@ class VideoPlayer(object):
                     succeed = True
         if not succeed:
             raise StopIteration
+        frames = self.frame_processor(frames)
         return frames
 
     def _render_new(self):
-        frames = self.frame_processor(self._next_frames())
+        frames = self._next_frames()
         try:
             canvas = self._render_default()
         except AttributeError:
