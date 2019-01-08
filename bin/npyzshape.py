@@ -20,6 +20,9 @@ if __name__ == '__main__':
     data = np.load(args.npyzfile)
     try:
         for k, v in data.items():
-            print(k, ':', ','.join(map(str, v.shape)), sep='')
+            if len(v.shape):
+                print(k, ':', ','.join(map(str, v.shape)), sep='')
+            else:
+                print(k, ': <scalar>')
     except AttributeError:
         print(','.join(map(str, data.shape)))
