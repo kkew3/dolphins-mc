@@ -224,7 +224,12 @@ class BWCAEPreprocess(object):
         """
         h, w = img.shape[:2]
         sh_after_ds = h // self.downsample_scale, w // self.downsample_scale
-        gray = Image.fromarray(img.max(axis=2))
+        if len(img.shape) == 2:
+            gray = Image.fromarray(img)
+        elif len(img.shape) == 3 and img.shape[2] == 1:
+            gray = Image.fromarray(img[..., 0])
+        else:
+            gray = Image.fromarray(img.max(axis=2))
         try:
             _ = self.downsample
         except AttributeError:
