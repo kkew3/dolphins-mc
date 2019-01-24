@@ -8,8 +8,9 @@ from more_sampler import SlidingWindowBatchSampler
 import numpy as np
 import matplotlib
 import vmdata
-from more_trans import rearrange_temporal_batch, DeNormalize, clamp_tensor_to_image
-from torch import nn
+from more_trans import rearrange_temporal_batch, DeNormalize, \
+    clamp_tensor_to_image
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from utils import loggername
 
@@ -93,7 +94,8 @@ def LoCHW2BTHW(tensors: Iterable[torch.Tensor], T: int) -> torch.Tensor:
 
 def postprocess(inputs: torch.Tensor, attns: torch.Tensor,
                 outputs: torch.Tensor, targets: torch.Tensor,
-                denormalize, tbatch_size) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+                denormalize, tbatch_size) -> Tuple[np.ndarray, np.ndarray,
+                                                   np.ndarray, np.ndarray]:
     inputs = to_cpu(inputs)  # shape: (B, 1, T, H, W)
     attns = to_cpu(attns)  # shape: (B, 1, T, H, W)
     outputs = to_cpu(outputs)  # shape: (B, 1, 1, H, W)
@@ -187,13 +189,14 @@ def visualize(todir: str, root: str, transform, normalize_stats,
             loss.backward()
             attns = inputs.grad * temperature
 
-            logger.info('[f{}-{}/eval/attn] l1norm={} l2norm={} numel={} max={}'
-                        .format(np.min(iframes),
-                                np.max(iframes),
-                                torch.norm(attns.detach(), 1).item(),
-                                torch.norm(attns.detach(), 2).item(),
-                                torch.numel(attns.detach()),
-                                torch.max(attns.detach())))
+            logger.info(
+                '[f{}-{}/eval/attn] l1norm={} l2norm={} numel={} max={}'
+                    .format(np.min(iframes),
+                            np.max(iframes),
+                            torch.norm(attns.detach(), 1).item(),
+                            torch.norm(attns.detach(), 2).item(),
+                            torch.numel(attns.detach()),
+                            torch.max(attns.detach())))
             logger.info('[f{}-{}/eval/loss] mse={} B={}'
                         .format(np.min(iframes),
                                 np.max(iframes),
@@ -208,13 +211,13 @@ def visualize(todir: str, root: str, transform, normalize_stats,
                 attns = sigmoid(attns)
 
             inputs, attns, outputs, targets = postprocess(
-                    inputs, attns, outputs, targets,
-                    denormalize, tbatch_size)
+                inputs, attns, outputs, targets,
+                denormalize, tbatch_size)
 
             for b in range(batch_size):
                 f = os.path.join(todir, predname_tmpl.format(itargets[b]))
                 draw_left_right(f, (outputs[b], targets[b]))
                 for t in range(tbatch_size):
                     f = os.path.join(todir, attnname_tmpl.format(
-                            iinputs[b, t], itargets[b]))
+                        iinputs[b, t], itargets[b]))
                     draw_up_down(f, (inputs[b, t], attns[b, t]))
