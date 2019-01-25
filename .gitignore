@@ -18,10 +18,12 @@ __pycache__
 *.swp
 *.bak
 
-# experiments not intended for display
+# experiments not intended for display (too large)
 experiments/ipynb/*.py
 experiments/ipynb/Makefile*
 experiments/src/
+bin/_playvideos_routines/
+lib/.profile/
 
 
 # (large) data files or archives
