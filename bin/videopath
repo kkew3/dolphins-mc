@@ -1,7 +1,17 @@
 #!/bin/bash
 show_help() {
-	echo "Usage: videopath DAY CHANNEL START_HOUR"
-	echo "Usage: videopath CHANNEL START_HOUR"
+	cat << EOF
+Usage: videopath DAY CHANNEL START_HOUR"
+       videopath CHANNEL START_HOUR"
+       videopath [d[ay]=DAY] [c[h]=CHANNEL] [h[r]=START_HOUR]
+
+Examples (the following commands share the same meaning):
+
+	videopath 2 1 8
+	videopath day=2 ch=1 hr=8      # keyworded
+	videopath ch=1 day=2 hr=8      # reordered
+	videopath h=8 d=2 c=1          # shortened keywords
+EOF
 }
 
 videodir="$PROJ_HOME/res/videos"
@@ -20,15 +30,55 @@ if [ "$1" = "-h" -o "$1" = "--help" ]; then
 	show_help
 	exit 0
 elif [ -n "$3" ]; then
-	day="$1"
-	ch="$2"
-	sthour="$3"
+	if echo "${1}${2}${3}" | grep -q '='; then
+		while [ -n "$1" ]; do
+			val="${1##*=}"
+			case "${1%=*}" in
+				d*) day="$val" ;;
+				c*) ch="$val" ;;
+				h*) sthour="$val" ;;
+			esac
+			shift
+		done
+		if [ -z "$day" ]; then
+			echo "DAY unspecified" >&2
+			exit 1
+		elif [ -z "$ch" ]; then
+			echo "CHANNEL unspecified" >&2
+			exit 1
+		elif [ -z "$sthour" ]; then
+			echo "START_HOUR unspecified" >&2
+			exit 1
+		fi
+	else
+		day="$1"
+		ch="$2"
+		sthour="$3"
+	fi
 	echo "$videodir/${day}Feb13.${sthour}to$((${sthour}+3))/[CH$(rjust2 "$ch")]$(rjust2 "$sthour")_00_00.avi"
 elif [ -n "$2" ]; then
-	ch="$1"
-	sthour="$2"
+	if echo "${1}${2}" | grep -q '='; then
+		while [ -n "$1" ]; do
+			val="${1##*=}"
+			case "${1%=*}" in
+				c*) ch="$val" ;;
+				h*) sthour="$val" ;;
+			esac
+			shift
+		done
+		if [ -z "$ch" ]; then
+			echo "CHANNEL unspecified" >&2
+			exit 1
+		elif [ -z "$sthour" ]; then
+			echo "START_HOUR unspecified" >&2
+			exit 1
+		fi
+	else
+		ch="$1"
+		sthour="$2"
+	fi
 	echo "$videodir/[CH$(rjust2 "$ch")]$(rjust2 "$sthour")_00_00.avi"
 else
-	show_help
+	echo "Illegal # of arguments" >&2
 	exit 1
 fi
