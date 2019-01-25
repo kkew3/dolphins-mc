@@ -88,7 +88,7 @@ def gradreg(inputs, strength=0.0, reg_method=None, train=True,
            regularization loss; default to L1 norm
     :param train: when set to ``False``, do not create graph for 2nd order
            derivative
-    :param normalized_wrt_batch: ``True`` to normalize the gradient
+    :param normalize_wrt_batch: ``True`` to normalize the gradient
            regularization by the batch size of ``inputs``; this argument will
            be ignored when ``reg_method`` is not ``None``
 
@@ -120,7 +120,7 @@ def gradreg(inputs, strength=0.0, reg_method=None, train=True,
     >>> bg = net.bias.grad.item()
     >>> sw = torch.sign(net.weight.data.view(-1))
     >>> wgt = x + sw
-    >>> assert (wg == wgt).all()
+    >>> assert torch.all(wg == wgt)
     >>> assert bg == 1.0
     """
     xrg = inputs.requires_grad
