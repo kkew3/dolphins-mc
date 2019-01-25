@@ -1,25 +1,21 @@
-import importlib
 import logging
-import os
-from typing import Iterable, Tuple, Sequence, Callable
+from typing import Iterable, Tuple, Sequence
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-import torchvision.transforms as trans
-import matplotlib
 
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
-from utils import loggername as _l
+import utils
 import vmdata
 import more_sampler
 import more_trans
 from gradreg import gradreg, no_grad_params
 from grplaincae.basicmodels import Autoencoder
 from trainlib import BasicTrainer
+
+def _l(*args):
+    return logging.getLogger(utils.loggername(__name__, *args))
 
 
 class TrainOnlyAdamTrainer(BasicTrainer):
@@ -33,7 +29,7 @@ class TrainOnlyAdamTrainer(BasicTrainer):
                  trainset_indices: Sequence[int], gr_strength=0.0,
                  max_epoch: int = 1, batch_size: int = 8,
                  device='cpu'):
-        logger = logging.getLogger(_l(__name__, self, '__init__'))
+        logger = _l(self, '__init__')
         self.net_module = net_module
         net = Autoencoder(self.net_module.STCAEEncoder(), self.net_module.STCAEDecoder())
         logger.debug('Loaded autoencoder net from module {}'
@@ -71,7 +67,7 @@ class TrainOnlyAdamTrainer(BasicTrainer):
         """
         Train for one minibatch.
         """
-        logger = logging.getLogger(_l(__name__, self, 'train_once'))
+        logger = _l(self, 'train_once')
         loss_part = [0, 0]
         with gradreg(inputs, strength=self.gr_strength) as ns:
             outputs = self.net(inputs)
