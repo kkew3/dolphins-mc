@@ -1,12 +1,15 @@
 #!/bin/bash
 
-curfile="$(basename "$0")"
+curfile="$(basename "${BASH_SOURCE[0]}")"
 show_help() {
 	cat << EOF
 Count run time (in hours) by parsing the log file "runs.log". The KEYWORD is
 used as ends of the counted time periods.
 
-Usage: $curfile KEYWORD
+Usage: $curfile KEYWORD [LOGFILE]
+
+    KEYWORD       grep-style pattern of line
+    LOGFILE       log file to parse, default to "runs.log"
 EOF
 }
 
@@ -20,14 +23,20 @@ trap teardown EXIT
 if [ "$1" = "-h" -o "$1" = "--help" ]; then
 	show_help
 	exit 0
-elif [ -z "$1" ]; then
+fi
+if [ -z "$1" ]; then
 	show_help
 	exit 1
-else
-	keyword="$1"
 fi
 
-logfile="runs.log"
+keyword="$1"
+if [ -z "$2" ]; then
+	logfile="runs.log"
+else
+	echo "Using ./runs.log as input file" >&2
+	logfile="runs.log"
+fi
+
 if [ ! -f "$logfile" ]; then
 	echo "$logfile not found" >> /dev/stderr
 	exit 1
@@ -41,7 +50,5 @@ cat "$TMPFILE" \
 | xargs -d'\n' -n1 -i -- date -d {} +%s \
 | sed '$a'"$(date +%s)" \
 | awk 'NR>1{print $1-p} {p=$1}' \
-| sed 's/^/scale=2; / ; s/$/\/3600/' \
-| bc \
-| sed 's/$/hrs/' \
+| xargs -n1 -I'{}' -- date -d@{} -u +"%d days %H:%M:%S"
 | paste -d'|' - "$TMPFILE"
