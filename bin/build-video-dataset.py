@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 r"""
 Build video dataset based on Hierarchical Data Format 5 (HDF5) and `hickle`

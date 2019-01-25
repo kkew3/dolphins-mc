@@ -1,4 +1,4 @@
-#!/usr/bin/env python -O
+#!/usr/bin/env python3 -O
 import argparse
 import contextlib
 import itertools
