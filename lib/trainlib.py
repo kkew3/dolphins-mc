@@ -653,8 +653,8 @@ class BasicTrainer(object):
             # to conform to the naming policy of ``numpy.savez``
             stat_names = ['arr_{}'.format(i) for i in range(len(stats))]
 
-        if len(self.stat_names) != len(stats):
-            logger.warning('len(self.stat_names) is '
-                           'different from len(stats): {} != {}'
-                           .format(len(self.stat_names), len(stats)))
+        if len(stat_names) != len(stats):
+            logger.warning('len(stat_names) ({}) is different from '
+                           'len(stats) ({})'
+                           .format(len(stat_names), len(stats)))
         return collections.OrderedDict(zip(stat_names, stats))
