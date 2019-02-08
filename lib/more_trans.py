@@ -190,15 +190,18 @@ class BWCAEPreprocess(object):
     Steps:
 
         1. convert RGB to B&W by taking the maximum along the channel axis
+           (if it's already in B&W, do nothing)
         2. downsample by specified scale
         3. random crop a little bit such that the height and the width are
-           both powers of the subsequent pooling scale
+           both powers of the subsequent pooling scale (or raise error if crop
+           is needed and ``no_crop`` is ``True``)
         4. normalize the image matrix
         5. optionally convert B&W back to RGB by repeating the image matrix
            three times along the channel axis
     """
     def __init__(self, normalize: trans.Normalize, pool_scale: int = 1,
-                 downsample_scale: int = 1, to_rgb: bool = False):
+                 downsample_scale: int = 1, to_rgb: bool = False,
+                 no_crop: bool = False, no_randomcrop: bool = False):
         """
         :param normalize: the normalization transform
         :param pool_scale: the overall scale of the pooling operations in
@@ -209,12 +212,17 @@ class BWCAEPreprocess(object):
         :param downsample_scale: the scale to downsample the video frames
         :param to_rgb: if True, at the last step convert from B&W image to
                RGB image
+        :param no_crop: if True, raise RuntimeError if a crop is necessary
+        :param no_randomcrop: if True, and if ``no_crop`` is False, resort to
+               ``CenterCrop``
         """
         self.totensor = trans.ToTensor()
         self.normalize = normalize
         self.pool_scale = pool_scale
         self.downsample_scale = downsample_scale
         self.to_rgb = to_rgb
+        self.no_crop = no_crop
+        self.no_randomcrop = no_randomcrop
 
     def __call__(self, img: np.ndarray) -> torch.Tensor:
         """
@@ -239,9 +247,17 @@ class BWCAEPreprocess(object):
             _ = self.crop
         except AttributeError:
             gh, gw = gray.height, gray.width
-            gh = utils.inf_powerof(gh, self.pool_scale)
-            gw = utils.inf_powerof(gw, self.pool_scale)
-            self.crop = trans.RandomCrop((gh, gw))
+            gh_ = utils.inf_powerof(gh, self.pool_scale)
+            gw_ = utils.inf_powerof(gw, self.pool_scale)
+            if (gh_ < gh or gw_ < gw) and self.no_crop:
+                    raise RuntimeError('Crop is forbidden but it\'s necessary,'
+                                       ' with actual (h,w)=({},{}) and desired'
+                                       ' (h,w)=({},{})'
+                                       .format(gh, gw, gh_, gw_))
+            if self.no_randomcrop or (gh_ == gh and gw_ == gw):
+                self.crop = trans.CenterCrop((gh_, gw_))
+            else:
+                self.crop = trans.RandomCrop((gh_, gw_))
         gray = self.crop(gray)
         tensor = self.totensor(gray)
         tensor = self.normalize(tensor)
