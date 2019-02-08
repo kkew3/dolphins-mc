@@ -1,12 +1,14 @@
+import collections
 import itertools
 import operator as op
+import random
 from functools import partial
 
 import numpy as np
 
 import torch
 from torch.utils.data.sampler import Sampler
-from typing import List
+from typing import List, Sequence, Dict
 
 import utils
 
@@ -127,3 +129,89 @@ class SlidingWindowBatchSampler(Sampler):
     def _sample_batch_once(self, segid_startind):
         segid, startind = segid_startind
         return self.indices[segid][startind:startind + self.window_width]
+
+
+class BalancedLabelSampler(torch.utils.data.Sampler):
+    """
+    This sampler implies shuffled=True.
+
+    >>> class NumpyDataset(torch.utils.data.Dataset):
+    ...     def __init__(self, arr):
+    ...         self.data, self.labels = arr[:, 0], arr[:, 1]
+    ...     def __len__(self):
+    ...         return len(self.data)
+    ...     def __getitem__(self, index):
+    ...         return self.data[index], self.labels[index]
+    >>> dataset = NumpyDataset(
+    ...     np.stack((np.random.randint(5, 11, size=500),
+    ...               np.repeat(np.arange(5), 100)), axis=1))
+    >>> sam = BalancedLabelSampler(dataset)
+    >>> loader = torch.utils.data.DataLoader(dataset, sampler=sam)
+    >>> label_counts = collections.defaultdict(int)
+    >>> labels = []
+    >>> for i, (_, label) in enumerate(loader):
+    ...     if i >= 100:
+    ...         break
+    ...     label_counts[label.item()] += 1
+    >>> np.var(list(label_counts.values())) < 500
+    True
+    >>> loader = torch.utils.data.DataLoader(dataset, sampler=sam)
+    >>> len([_ for _ in loader])
+    500
+    """
+
+    # noinspection PyMissingConstructor
+    def __init__(self, *args):
+        """
+        To sets of positional arguments are possible, either;
+
+        :param indicies: range of indices to sample from the underlying
+               dataset
+        :type indicies: Sequence[int]
+        :param labels: the labels of corresponding indicies
+        :type labels: Sequence[int]
+
+        or:
+
+        :param dataset: dataset where each item consists of an input and a
+               target label
+        :type dataset: torch.utils.data.Dataset
+        """
+        if len(args) == 2:
+            indices, labels = args
+            if len(indices) != len(labels):
+                raise ValueError('length of labels ({}) != number of '
+                                 'indices ({})'
+                                 .format(len(labels), len(indices)))
+        else:
+            dataset, = args
+            indices = range(len(dataset))
+            labels = [dataset[i][1] for i in range(len(dataset))]
+        self._len_dataset = len(indices)
+
+        ul2idx = collections.defaultdict(list)
+        for i, l in zip(indices, labels):
+            ul2idx[l].append(i)
+        self.ul2idx = ul2idx  # type: Dict[int, List[int]]
+        """uniq labels to indicies"""
+
+    def __len__(self):
+        return self._len_dataset
+
+    def __iter__(self):
+        cindex_lens = {k: len(indices) for k, indices in self.ul2idx.items()}
+        shuffled_indices = {k: np.random.permutation(cindex_lens[k])
+                            for k in self.ul2idx}
+        to_visit_pointers = {k: 0 for k in cindex_lens}
+
+        remaining_clists = [k for k in self.ul2idx
+                            if to_visit_pointers[k] < cindex_lens[k]]
+        while remaining_clists:
+            next_cnt = random.choice(remaining_clists)
+            idx = self.ul2idx[next_cnt][
+                shuffled_indices[next_cnt][
+                    to_visit_pointers[next_cnt]]]
+            to_visit_pointers[next_cnt] += 1
+            remaining_clists = [k for k in self.ul2idx
+                                if to_visit_pointers[k] < cindex_lens[k]]
+            yield idx
