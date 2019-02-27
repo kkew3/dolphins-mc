@@ -610,12 +610,16 @@ class BasicTrainer(object):
                             # `it` is `(inputs, targets)`
                             self.__before_batch(self.stage)
                             stats = self.__once(self.stage, *it)
-                            stats_to_log = self._organize_stats(stats)
-                            logger.info('epoch{}/{} batch{}: {}'
-                                        .format(epoch, self.stage, batch,
-                                                list(stats_to_log.items())))
-                            statsaver = self._statsaver(self.stage)
-                            statsaver((epoch, batch), **stats_to_log)
+                            if stats:
+                                stats_to_log = self._organize_stats(stats)
+                                logger.info('epoch{}/{} batch{}: {}'
+                                            .format(epoch, self.stage, batch,
+                                                    list(stats_to_log.items())))
+                                statsaver = self._statsaver(self.stage)
+                                statsaver((epoch, batch), **stats_to_log)
+                            else:
+                                logger.info('epoch{}/{} batch{}'
+                                            .format(epoch, self.stage, batch))
                             checkpointsaver = self._checkpointsaver()
                             checkpointsaver((epoch, batch))
                             self.__after_batch(self.stage)
@@ -628,12 +632,16 @@ class BasicTrainer(object):
                             # `it` is `(inputs, targets)`
                             self.__before_batch(self.stage)
                             stats = self.__once(self.stage, *it)
-                            stats_to_log = self._organize_stats(stats)
-                            logger.info('epoch{}/{} batch{}: {}'
-                                        .format(epoch, self.stage, batch,
-                                                list(stats_to_log.items())))
-                            statsaver = self._statsaver(self.stage)
-                            statsaver((epoch, batch), **stats_to_log)
+                            if stats:
+                                stats_to_log = self._organize_stats(stats)
+                                logger.info('epoch{}/{} batch{}: {}'
+                                            .format(epoch, self.stage, batch,
+                                                    list(stats_to_log.items())))
+                                statsaver = self._statsaver(self.stage)
+                                statsaver((epoch, batch), **stats_to_log)
+                            else:
+                                logger.info('epoch{}/{} batch{}'
+                                            .format(epoch, self.stage, batch))
                             self.__after_batch(self.stage)
                 self.after_epoch()
             logger.info('Returns successfully')
