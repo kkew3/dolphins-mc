@@ -1,9 +1,8 @@
 """
 Common utilities used in experiments.
 """
-import pdb
-import functools
-import importlib
+import configparser
+import inspect
 import itertools
 import collections
 import os
@@ -12,10 +11,20 @@ import json
 import tempfile
 import contextlib
 from types import SimpleNamespace
-from typing import Union, Tuple, Sequence, Optional
+import logging
+import typing
 
 import numpy as np
 import h5py
+
+import utils
+import vmdata
+
+T = typing.TypeVar('T')
+
+
+def _l(*args):
+    return logging.getLogger(utils.loggername(__name__, *args))
 
 
 class ExperimentLauncher(object):
@@ -123,7 +132,7 @@ class ExperimentLauncher(object):
 
 
 @contextlib.contextmanager
-def fig_as_data(plt, fig, ax, with_alpha=False):
+def fig_as_data(plt, fig, with_alpha=False):
     plt.axis('off')
     ns = SimpleNamespace()
     try:
@@ -132,6 +141,7 @@ def fig_as_data(plt, fig, ax, with_alpha=False):
         raise
     else:
         fig.canvas.draw()
+        # noinspection PyProtectedMember
         data = np.array(fig.canvas.renderer._renderer)
         if not with_alpha:
             data = data[..., :3]
@@ -140,7 +150,8 @@ def fig_as_data(plt, fig, ax, with_alpha=False):
         plt.close()
 
 
-def get_runid_from_file(_file_: str, return_prefix=False) -> Union[str, Tuple[str, str]]:
+def get_runid_from_file(_file_: str, return_prefix=False) \
+        -> typing.Union[str, typing.Tuple[str, str]]:
     r"""
     Extract runid from __file__, provided that __file__ is of format
     ``{something}.{runid}.py``, strictly speaking, of regex
@@ -161,7 +172,10 @@ def get_runid_from_file(_file_: str, return_prefix=False) -> Union[str, Tuple[st
         return matched.group(2)
 
 
-def make_grid(images: Sequence[np.ndarray], layout: Sequence[Sequence[int]],
+GridLayoutSpec = typing.Sequence[typing.Sequence[int]]
+
+
+def make_grid(images: typing.Sequence[np.ndarray], layout: GridLayoutSpec,
               margin: int = 1) -> np.ndarray:
     """
     Make a sequence of images into grid so that they can be plotted in one
@@ -201,7 +215,8 @@ def make_grid(images: Sequence[np.ndarray], layout: Sequence[Sequence[int]],
                 im = im[..., np.newaxis]
             if 1 == im.shape[2] < nchannels:
                 im = np.repeat(im, nchannels, axis=2)
-            canvas[loc[0]:loc[0]+im.shape[0], loc[1]:loc[1]+im.shape[1]] = im
+            canvas[loc[0]:loc[0] + im.shape[0],
+            loc[1]:loc[1] + im.shape[1]] = im
     return canvas
 
 
@@ -311,3 +326,140 @@ class H5ResultSaver(object):
                 pass
             else:
                 ds.resize(self.dslen, axis=0)
+
+
+class IniFunctionCaller:
+    def __init__(self, cfg: configparser.ConfigParser,
+                 varparam_policy='raise'):
+        self.cfg = cfg
+        self.varparam_policy = varparam_policy
+
+    def call(self, f: typing.Callable[[typing.Any], T], **kwargs) -> T:
+        """
+        :param f: the callable to invoke
+        :param scopes: INI sections to search for; if None, search in all
+               sections in sequential order until the underlying key is found
+        :type scopes: typing.Sequence[str]
+        :param argname2inikey: translate certain argument name to INI key name
+        :type argname2inikey: typing.Dict[str, str]
+        :param argname2ty: translate certain argument name to unary function
+               that converts string INI value to appropriate type; if not
+               specified, the unary function will be taken from the type
+               annotation, and if not found in annotation, default to ``str``
+        :type argname2ty: typing.Dict[str, typing.Callable[ [str], typing.Any]]
+        :return: whatever is returned by ``f``
+        """
+        logger = _l(self, 'call')
+        argname2inikey = kwargs.get('argname2inikey', {})
+        argname2ty = kwargs.get('argname2ty', {})
+        scopes = kwargs.get('scopes', list(self.cfg.sections()))
+
+        args = collections.OrderedDict()
+        kwargs = collections.OrderedDict()
+        params = inspect.signature(f).parameters
+        for name, par in params.items():
+            if par.kind in (inspect.Parameter.VAR_KEYWORD,
+                            inspect.Parameter.VAR_POSITIONAL):
+                if self.varparam_policy == 'ignore':
+                    logger.info('Ignored var parameter in callable {}'
+                                .format(f))
+                    continue
+                else:
+                    raise RuntimeError('Unsupported parameter *args and/or '
+                                       '**kwargs found in callable {}'
+                                       .format(f))
+            if par.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                            inspect.Parameter.POSITIONAL_OR_KEYWORD):
+                param_queue = args
+            else:
+                param_queue = kwargs
+
+            inikey = argname2inikey.get(name, name)
+            for sec in scopes:
+                if inikey in self.cfg[sec]:
+                    inivalue = self.cfg[sec][inikey]
+                    if name in argname2ty:
+                        ty = argname2ty[name]
+                    elif par.annotation != inspect.Parameter.empty:
+                        ty = par.annotation
+                    else:
+                        ty = str
+                    inivalue = ty(inivalue)
+                    break
+            else:
+                if par.default != inspect.Parameter.empty:
+                    inivalue = par.default
+                else:
+                    raise KeyError('Argument `{}` (inikey={}) of '
+                                   'callable {} not specified in self.cfg'
+                                   .format(name, inikey, f))
+            param_queue[name] = inivalue
+        args = tuple(args.values())
+        logger.info('Parsed args: {}'.format(args))
+        logger.info('Parsed kwargs: {}'.format(kwargs))
+        return f(*args, **kwargs)
+
+
+class LiteralBoolean:
+    def __call__(self, string):
+        return string == 'True'
+
+
+class FixedLenDelimSepList:
+    def __init__(self, n: int, delim=',', type_=int):
+        self.n = n
+        self.delim = delim
+        self.type_ = type_
+
+    def __call__(self, string) -> typing.Tuple:
+        value = tuple(map(self.type_, string.split(self.delim)))
+        if len(value) != self.n:
+            raise ValueError('Expecting list of length {} but got {}'
+                             .format(self.n, len(value)))
+        return value
+
+
+class VdsetRoot:
+    def __init__(self):
+        self.parser2 = FixedLenDelimSepList(2)
+        self.parser3 = FixedLenDelimSepList(3)
+
+    def __call__(self, string) -> str:
+        try:
+            value = self.parser2(string)
+        except ValueError:
+            value = self.parser3(string)
+        return vmdata.dataset_root(*value)
+
+
+class IntRanges:
+    def __call__(self, string: str) -> typing.List[typing.Sequence[int]]:
+        rngs = []
+        for r in string.strip().split(','):
+            try:
+                start, end = tuple(map(int, r.split('-')))
+            except (ValueError, TypeError):
+                try:
+                    start = int(r)
+                except (ValueError, TypeError):
+                    raise
+                else:
+                    end = start + 1
+            rngs.append(range(start, end))
+        return rngs
+
+
+def normalize_radiant_angle(x: np.ndarray) -> np.ndarray:
+    """
+    Normalize angular value to [0, 2pi], with ``np.nan`` intact.
+    :param x: the angular value, possibly containing ``np.nan``
+    :return: the normalized angles
+    """
+    x = np.copy(x)
+    with utils.suppress_numpy_warning(invalid='ignore'):
+        gt0 = (x > 0)
+        lt0 = (x < 0)
+    mul = np.floor_divide(np.abs(x), 2 * np.pi)
+    x += lt0 * (1 + mul) * 2 * np.pi
+    x -= gt0 * mul * 2 * np.pi
+    return x
