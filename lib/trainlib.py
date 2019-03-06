@@ -6,11 +6,11 @@ import os
 import logging
 from datetime import datetime
 import collections
+import typing
 
 import numpy as np
 import torch
 import torch.nn as nn
-from typing import Any, Union, Callable, Tuple, Dict, Sequence
 
 from utils import loggername
 
@@ -19,7 +19,10 @@ def _l(*args):
     return logging.getLogger(loggername(__name__, *args))
 
 
-def action_fired(fired: Union[int, Callable[[Any], bool]]) -> Callable[[Any], bool]:
+_Predicate = typing.Callable[[typing.Any], bool]
+_EBProgress = typing.Tuple[int, int]
+
+def action_fired(fired: typing.Union[int, _Predicate]) -> _Predicate:
     """
     Returns a callable that returns a bool indicating whether an action should
     be performed given the progress of an ongoing task.
@@ -42,21 +45,28 @@ def action_fired(fired: Union[int, Callable[[Any], bool]]) -> Callable[[Any], bo
     return fired
 
 
-def fired_always(progress): return True
+def fired_always(_) -> bool:
+    """
+    Always fire whatever the progress.
+    """
+    return True
 
 
-def fired_batch(batch: int, progress: Tuple[int, int]):
+def fired_batch(batch: int, progress: _EBProgress) -> bool:
+    """
+    Fire every other ``batch`` given progress in (epoch, batch) tuple.
+    """
     return progress[1] % max(1, batch) == 0
 
 
-class CheckpointSaver(object):
+class CheckpointSaver:
     """
     Save checkpoint periodically.
     """
 
     def __init__(self, net: nn.Module, savedir: str,
                  checkpoint_tmpl: str = 'checkpoint_{0}.pth',
-                 fired: Union[int, Callable[[Any], bool]] = 10):
+                 fired: typing.Union[int, _Predicate] = 10):
         """
         :param net: the network to save states; the network should already been
                in the target device
@@ -82,7 +92,7 @@ class CheckpointSaver(object):
         self.checkpoint_tmpl = checkpoint_tmpl
         self.savedir = savedir
 
-    def __call__(self, progress):
+    def __call__(self, progress) -> typing.Optional[str]:
         """
         Save checkpoint as needed.
 
@@ -120,14 +130,14 @@ def load_checkpoint(net: nn.Module, savedir: str, checkpoint_tmpl: str,
                  .format(progress, fromfile))
 
 
-class StatSaver(object):
+class StatSaver:
     """
     Save (scalar) statistics periodically as npz file.
     """
 
     def __init__(self, statdir: str,
                  statname_tmpl='stats_{0}.npz',
-                 fired: Union[int, Callable[[Any], bool]] = 10):
+                 fired: typing.Union[int, _Predicate] = 10):
         """
         :param statdir: the directory under which to write statistics npz
                files; if not exists, it will be created automatically
@@ -167,12 +177,13 @@ class StatSaver(object):
 
 
 class FieldChangedError(BaseException):
-    def __init__(self, original: Sequence[str], now: Sequence[str]):
+    def __init__(self, original: typing.Sequence[str],
+                 now: typing.Sequence[str]):
         super().__init__('Fields changed from {} to {}'
                          .format(original, now))
 
 
-class CsvStatSaver(object):
+class CsvStatSaver:
     """
     Save scalar statistics as CSV files. To simplify design and
     implementation, the ``progress`` is assumed to be 2-tuples of integers
@@ -184,7 +195,7 @@ class CsvStatSaver(object):
 
     def __init__(self, statdir: str,
                  statname_tmpl: str = 'stats_{0}.csv',
-                 fired: Union[int, Callable[[Any], bool]] = 10):
+                 fired: typing.Union[int, _Predicate] = 10):
         """
         :param statdir: the directory under which to write statistics npz
                files; if not exists, it will be created automatically
@@ -241,7 +252,8 @@ class CsvStatSaver(object):
 
 
 def load_stat(statdir: str, statname_tmpl: str, progress: tuple,
-              key: str = None) -> Union[Dict[str, np.ndarray], np.ndarray]:
+              key: str = None) \
+        -> typing.Union[typing.Dict[str, np.ndarray], np.ndarray]:
     """
     Load statistics dumped by ``StatSaver``.
 
@@ -265,7 +277,7 @@ def load_stat(statdir: str, statname_tmpl: str, progress: tuple,
     return data
 
 
-def freeze_model(model: nn.Module) -> Dict[str, bool]:
+def freeze_model(model: nn.Module) -> typing.Dict[str, bool]:
     """
     Freeze the model parameters.
 
@@ -278,7 +290,7 @@ def freeze_model(model: nn.Module) -> Dict[str, bool]:
     return origrg
 
 
-def melt_model(model: nn.Module, origrg: Dict[str, bool],
+def melt_model(model: nn.Module, origrg: typing.Dict[str, bool],
                empty_after_melting=False) -> None:
     """
     Melt the model parameters into their original ``requires_grad`` states.
@@ -295,7 +307,7 @@ def melt_model(model: nn.Module, origrg: Dict[str, bool],
         origrg.clear()
 
 
-class BasicTrainer(object):
+class BasicTrainer:
     """
     Abstract class of a basic trainer that codes the general framework of
     training a network. The class defines yet to be implemented callbacks
@@ -401,7 +413,7 @@ class BasicTrainer(object):
     """
 
     def __init__(self, net: nn.Module, max_epoch: int = 1,
-                 device: str = 'cpu', progress: Tuple[int, int] = None,
+                 device: str = 'cpu', progress: _EBProgress = None,
                  freeze_net_when_necessary=False):
         r"""
         :param net: the network to train
@@ -415,7 +427,7 @@ class BasicTrainer(object):
                would be ``(E+1, 0)``, and will overwrite existing npy
                statistics and pth checkpoint files.
         :param freeze_net_when_necessary: if True, freeze the network
-               parameters whenever ``self.stage`` is not 'train', and
+               parameters whenever ``self.__stage`` is not 'train', and
                always freeze the network if there's no 'train' in
                ``self.run_stages``. Do not specify as ``True`` if in non-train
                stages the network weights are used for backpropagation
@@ -424,7 +436,6 @@ class BasicTrainer(object):
         self.net = net
         self.max_epoch = max_epoch
         self.run_stages = ('train', 'eval')
-        self.stage = None  # current training stage
         self.progress = progress
         self.freeze_net_when_necessary = freeze_net_when_necessary
 
@@ -433,6 +444,23 @@ class BasicTrainer(object):
         self._origrg = {}
         """Used to freeze network when necessary"""
         self._frozen_always = False
+
+        # expose (readonly) current training progress
+        self.__stage: str = None  # current training stage
+        self.__epoch: int = None
+        self.__batch: int = None
+
+    @property
+    def stage(self):
+        return self.__stage
+
+    @property
+    def epoch(self):
+        return self.__epoch
+
+    @property
+    def batch(self):
+        return self.__batch
 
     @property
     def default_basedir(self):
@@ -469,15 +497,17 @@ class BasicTrainer(object):
                 if not hasattr(self, 'fired_{}'.format(stage)):
                     setattr(self, 'fired_{}'.format(stage), fired_always)
 
-    def prepare_net(self):
+    def prepare_net(self, ext_savedir: str = None) -> None:
         """
         Load checkpoint if ``progress`` is not ``None``, and move network to
         train to the specified device.
+
+        :param ext_savedir: external savedir; if not set, use ``self.savedir``
         """
+        savedir = ext_savedir if ext_savedir else getattr(self, 'savedir')
         if self.progress is not None:
-            load_checkpoint(self.net, getattr(self, 'savedir'),
-                            type(self).checkpoint_tmpl, self.progress,
-                            map_location=self.device)
+            load_checkpoint(self.net, savedir, type(self).checkpoint_tmpl,
+                            self.progress, map_location=self.device)
         self.net.to(self.device)
 
     def freeze_net(self):
@@ -486,7 +516,7 @@ class BasicTrainer(object):
     def melt_net(self):
         melt_model(self.net, self._origrg, empty_after_melting=True)
 
-    def _statsaver(self, stage):
+    def __statsaver(self, stage):
         """Deferred instantiation of ``(Csv)StatSaver``'s."""
         if stage == 'train':
             try:
@@ -506,7 +536,7 @@ class BasicTrainer(object):
                 setattr(self, 'statsaver_{}'.format(stage), saver)
         return saver
 
-    def _checkpointsaver(self):
+    def __checkpointsaver(self):
         """Deferred instantiation of the ``CheckpointSaver``."""
         try:
             saver = getattr(self, 'checkpointsaver')
@@ -564,8 +594,8 @@ class BasicTrainer(object):
 
     def teardown(self, error: BaseException = None):
         """
-        Callback before the return of ``run``, whether or not successful return
-        or unsuccessful one.
+        Callback before the return of ``run``, whether or not a successful
+        return.
 
             - melt the network if necessary (``melt_net``)
 
@@ -596,53 +626,65 @@ class BasicTrainer(object):
             epoch0 = 0
 
         try:
-            for epoch in range(epoch0, self.max_epoch):
+            for self.__epoch in range(epoch0, self.max_epoch):
                 self.before_epoch()
-                for self.stage in self.run_stages:
-                    logger.debug('Begin stage {}'.format(self.stage))
-                    if self.stage == 'train':
+                for self.__stage in self.run_stages:
+                    logger.debug('Begin stage {}'.format(self.__stage))
+                    if self.__stage == 'train':
                         self._trained_once = True
                         if (self.freeze_net_when_necessary
                                 and not self._frozen_always):
                             self.melt_net()
                         self.net.train()
-                        for batch, it in enumerate(self.__get_loader(self.stage)):
+                        for self.__batch, it in enumerate(
+                                self.__get_loader(self.__stage)):
                             # `it` is `(inputs, targets)`
-                            self.__before_batch(self.stage)
-                            stats = self.__once(self.stage, *it)
+                            self.__before_batch(self.__stage)
+                            stats = self.__once(self.__stage, *it)
                             if stats:
                                 stats_to_log = self._organize_stats(stats)
+                                stats_to_log_repr = list(stats_to_log.items())
                                 logger.info('epoch{}/{} batch{}: {}'
-                                            .format(epoch, self.stage, batch,
-                                                    list(stats_to_log.items())))
-                                statsaver = self._statsaver(self.stage)
-                                statsaver((epoch, batch), **stats_to_log)
+                                            .format(self.__epoch, self.__stage,
+                                                    self.__batch,
+                                                    stats_to_log_repr))
+                                statsaver = self.__statsaver(self.__stage)
+                                statsaver((self.__epoch, self.__batch),
+                                          **stats_to_log)
                             else:
                                 logger.info('epoch{}/{} batch{}'
-                                            .format(epoch, self.stage, batch))
-                            checkpointsaver = self._checkpointsaver()
-                            checkpointsaver((epoch, batch))
-                            self.__after_batch(self.stage)
+                                            .format(self.__epoch,
+                                                    self.__stage,
+                                                    self.__batch))
+                            checkpointsaver = self.__checkpointsaver()
+                            checkpointsaver((self.__epoch, self.__batch))
+                            self.__after_batch(self.__stage)
                     else:
                         if (self.freeze_net_when_necessary
                                 and not self._frozen_always):
                             self.freeze_net()
                         self.net.eval()
-                        for batch, it in enumerate(self.__get_loader(self.stage)):
+                        for self.__batch, it in enumerate(
+                                self.__get_loader(self.__stage)):
                             # `it` is `(inputs, targets)`
-                            self.__before_batch(self.stage)
-                            stats = self.__once(self.stage, *it)
+                            self.__before_batch(self.__stage)
+                            stats = self.__once(self.__stage, *it)
                             if stats:
                                 stats_to_log = self._organize_stats(stats)
+                                stats_to_log_repr = list(stats_to_log.items())
                                 logger.info('epoch{}/{} batch{}: {}'
-                                            .format(epoch, self.stage, batch,
-                                                    list(stats_to_log.items())))
-                                statsaver = self._statsaver(self.stage)
-                                statsaver((epoch, batch), **stats_to_log)
+                                            .format(self.__epoch, self.__stage,
+                                                    self.__batch,
+                                                    stats_to_log_repr))
+                                statsaver = self.__statsaver(self.__stage)
+                                statsaver((self.__epoch, self.__batch),
+                                          **stats_to_log)
                             else:
                                 logger.info('epoch{}/{} batch{}'
-                                            .format(epoch, self.stage, batch))
-                            self.__after_batch(self.stage)
+                                            .format(self.__epoch,
+                                                    self.__stage,
+                                                    self.__batch))
+                            self.__after_batch(self.__stage)
                 self.after_epoch()
             logger.info('Returns successfully')
             self.teardown()
@@ -653,7 +695,8 @@ class BasicTrainer(object):
             raise
 
     # noinspection PyUnresolvedReferences
-    def _organize_stats(self, stats: Tuple[Any]) -> dict:
+    def _organize_stats(self, stats: typing.Tuple) \
+            -> typing.Dict[str, typing.Any]:
         logger = _l('_organize_stats')
         try:
             stat_names = self.stat_names
