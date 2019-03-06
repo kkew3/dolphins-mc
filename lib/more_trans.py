@@ -1,3 +1,5 @@
+import typing
+
 import numpy as np
 import torch
 import torchvision.transforms as trans
@@ -6,7 +8,7 @@ from PIL import Image
 from scipy.ndimage import filters
 
 
-class DeNormalize(object):
+class DeNormalize:
     """
     The inverse transformation of ``tochvision.transforms.Normalize``. As in
     ``tochvision.transforms.Normalize``, this operation modifies input tensor
@@ -27,12 +29,13 @@ class DeNormalize(object):
         return tensor
 
     def __repr__(self):
-        return '{}(mean={}, std={})'.format(type(self).__name__,
-                                            tuple(self.mean.reshape(-1).tolist()),
-                                            tuple(self.std.reshape(-1).tolist()))
+        return ('{}(mean={}, std={})'
+                .format(type(self).__name__,
+                        tuple(self.mean.reshape(-1).tolist()),
+                        tuple(self.std.reshape(-1).tolist())))
 
 
-class ResetChannel(object):
+class ResetChannel:
     """
     Resets a specific input channel to 0.0.
     """
@@ -50,7 +53,7 @@ class ResetChannel(object):
         return tensor
 
 
-class GaussianBlur(object):
+class GaussianBlur:
     """
     Applicable only to Numpy arrays; thus it should be inserted before
     ``trans.ToTensor()``.
@@ -74,7 +77,7 @@ class GaussianBlur(object):
                                        truncate=self.tr_std)
 
 
-class MedianBlur(object):
+class MedianBlur:
     """
     Applicable only to Numpy arrays; thus it should be inserted before
     ``trans.ToTensor()``.
@@ -95,7 +98,7 @@ class MedianBlur(object):
         return filters.median_filter(img, (self.width, self.width, 1))
 
 
-class RGB2Gray(object):
+class RGB2Gray:
     """
     Applicable only to PyTorch tensor.
     """
@@ -182,10 +185,10 @@ def clamp_tensor_to_image(tensor: torch.Tensor):
     return torch.clamp(tensor, 0.0, 1.0)
 
 
-class BWCAEPreprocess(object):
+class BWCAEPreprocess:
     """
     The pre-processing transform before an autoregressive/autoencoding model
-    of encode-edecoder architecture that accepts grayscale images as inputs.
+    of encode-decoder architecture that accepts grayscale images as inputs.
 
     Steps:
 
@@ -199,6 +202,7 @@ class BWCAEPreprocess(object):
         5. optionally convert B&W back to RGB by repeating the image matrix
            three times along the channel axis
     """
+
     def __init__(self, normalize: trans.Normalize, pool_scale: int = 1,
                  downsample_scale: int = 1, to_rgb: bool = False,
                  no_crop: bool = False, no_randomcrop: bool = False):
@@ -223,37 +227,34 @@ class BWCAEPreprocess(object):
         self.to_rgb = to_rgb
         self.no_crop = no_crop
         self.no_randomcrop = no_randomcrop
+        self.to_gray = trans.Grayscale()  # type: typing.Callable[[Image.Image], Image.Image]
 
-    def __call__(self, img: np.ndarray) -> torch.Tensor:
+    def __call__(self, img: typing.Union[np.ndarray, Image.Image]) \
+            -> torch.Tensor:
         """
-        :param img: image of shape (H, W, C)
+        :param img: image of shape (H, W), or of shape (H, W, 3), or PIL Image
         :return: tensor of shape (1, H, W) if ``to_rgb`` is ``False``, else
                  of shape (3, H, W)
         """
-        h, w = img.shape[:2]
-        sh_after_ds = h // self.downsample_scale, w // self.downsample_scale
-        if len(img.shape) == 2:
-            gray = Image.fromarray(img)
-        elif len(img.shape) == 3 and img.shape[2] == 1:
-            gray = Image.fromarray(img[..., 0])
-        else:
-            gray = Image.fromarray(img.max(axis=2))
-        try:
-            _ = self.downsample
-        except AttributeError:
+        if not isinstance(img, Image.Image):
+            img = Image.fromarray(img)
+        gray = self.to_gray(img)
+
+        if not hasattr(self, 'downsample'):
+            w, h = gray.size
+            sh_after_ds = (h // self.downsample_scale,
+                           w // self.downsample_scale)
             self.downsample = trans.Resize(sh_after_ds)
         gray = self.downsample(gray)
-        try:
-            _ = self.crop
-        except AttributeError:
+        if not hasattr(self, 'crop'):
             gh, gw = gray.height, gray.width
             gh_ = utils.inf_powerof(gh, self.pool_scale)
             gw_ = utils.inf_powerof(gw, self.pool_scale)
             if (gh_ < gh or gw_ < gw) and self.no_crop:
-                    raise RuntimeError('Crop is forbidden but it\'s necessary,'
-                                       ' with actual (h,w)=({},{}) and desired'
-                                       ' (h,w)=({},{})'
-                                       .format(gh, gw, gh_, gw_))
+                raise RuntimeError('Crop is forbidden but it\'s necessary,'
+                                   ' with actual (h,w)=({},{}) and desired'
+                                   ' (h,w)=({},{})'
+                                   .format(gh, gw, gh_, gw_))
             if self.no_randomcrop or (gh_ == gh and gw_ == gw):
                 self.crop = trans.CenterCrop((gh_, gw_))
             else:
