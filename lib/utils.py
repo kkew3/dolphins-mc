@@ -3,14 +3,15 @@ Global library for other dedicated library or project/branch-specific codes.
 """
 import itertools
 import os
+import re
 import sys
 import torch
 from contextlib import contextmanager
+import copy
 
-from typing import Callable, Sequence, Any, Iterable
+from typing import Callable, Sequence, Any, Iterable, Union, Tuple, Dict
 import numpy as np
 import cv2
-import collections
 
 
 @contextmanager
@@ -131,11 +132,18 @@ def memmapcontext(filename, dtype, shape, offset=0, mode='r'):
         del mm
 
 
-def fcompose(funcs: Sequence[Callable]) -> Callable:
+def fcompose(funcs: Sequence[Callable], star=False) -> Callable:
     """
     Compose any number of callable objects into one callable object, which is
     the functional composition of all the objects from left to right. Each
     callable object should expect one single positional argument.
+
+    :param funcs: a sequence of functions to serially evaluate
+    :param star: set to True to allow the first function in ``funcs`` to
+           accept any number of positional and/or keyword arguments, while
+           other functions accepting one single positional argument as before;
+           note the difference with ``fstarcompose``
+    :return: the functional composition
 
     >>> def sum(values):
     ...     x, y = values
@@ -144,15 +152,23 @@ def fcompose(funcs: Sequence[Callable]) -> Callable:
     ...     return -value
     >>> fcompose([sum, negate])((1, 2))
     -3
-
-    :return: the functional composition
     """
 
-    def _wrapped(arg):
-        for f in funcs:
-            arg = f(arg)
-        return arg
-
+    if not star:
+        def _wrapped(arg):
+            if not funcs:
+                return None
+            for f in funcs:
+                arg = f(arg)
+            return arg
+    else:
+        def _wrapped(*args, **kwargs):
+            if not funcs:
+                return None
+            arg = funcs[0](*args, **kwargs)
+            for f in funcs[1:]:
+                arg = f(arg)
+            return arg
     return _wrapped
 
 
@@ -234,33 +250,6 @@ def jacobian(outputs: torch.Tensor, inputs: torch.Tensor,
              ``outputs[coor]``, where ``coor`` is a coordinate tuple of length
              ``len(outputs.size())``
 
-    >>> M = torch.tensor([[0.0745, 0.4937],
-    ...                   [0.7884, 0.7944]])
-    >>> X = torch.tensor([[0.2161, 0.3782],
-    ...                   [0.9080, 0.2498]], requires_grad=True)
-    >>> Y = torch.mm(torch.t(X), torch.mm(M, X))
-    >>> gYgX = jacobian(Y, X)
-    >>> gYgX.size()
-    torch.Size([2, 2, 2, 2])
-    >>> expected = torch.tensor([
-    ...        [[[1.1963, 0.0000],
-    ...          [1.7197, 0.0000]],
-    ...         [[0.1515, 0.7320],
-    ...          [0.4966, 0.8280]]],
-    ...        [[[0.2251, 0.4644],
-    ...          [0.3852, 0.8917]],
-    ...         [[0.0000, 0.3766],
-    ...          [0.0000, 0.8818]]]])
-    >>> # there might be some error in hand-written expected tensor ...
-    >>> bool(torch.max(torch.abs(gYgX - expected)) < 1e-4)
-    True
-    >>> x = torch.tensor(0.2876, requires_grad=True)
-    >>> y = torch.sigmoid(x * x)
-    >>> x_ = x.detach()
-    >>> expected = torch.sigmoid(x_ * x_) * (1 - torch.sigmoid(x_ * x_)) * 2 * x_
-    >>> gygx = jacobian(y, x)
-    >>> torch.allclose(expected, gygx)
-    True
     """
     if not to_device:
         to_device = inputs.device
@@ -274,7 +263,269 @@ def jacobian(outputs: torch.Tensor, inputs: torch.Tensor,
         coors = list(itertools.product(*map(range, outputs.size())))
         n = len(coors)
         for i, c in enumerate(coors):
-            gygx, = torch.autograd.grad(outputs[c], inputs, retain_graph=i < n - 1)
+            gygx, = torch.autograd.grad(outputs[c], inputs,
+                                        retain_graph=i < n - 1)
             gradmaps[c].copy_(gygx)
 
     return gradmaps
+
+
+def ituple_k(x: Union[int, Sequence[int]], k=2) -> Sequence[int]:
+    """
+    Expand an integer to a k-tuple of that integer if it's not already a
+    k-tuple. Note that the *integer* type is not enforced -- it only appears
+    in type hint. When expanding, the original ``x`` is shallow copied.
+    If ``x`` is a list, it will be first coverted to a tuple.
+
+    :param x: an integer or a k-tuple of integers
+    :param k: the desired length of the returned tuple
+    :return: the original tuple or the expanded tuple
+    :raise ValueError: if ``x`` is a tuple but not of length ``k``
+
+    >>> ituple_k(10)
+    (10, 10)
+    >>> ituple_k((1, 2))
+    (1, 2)
+    >>> ituple_k([1, 2])
+    (1, 2)
+    """
+    if isinstance(x, (list, tuple)):
+        x = tuple(x)
+        if len(x) != k:
+            raise ValueError('Expected len(x) to be {} but got {}'
+                             .format(k, len(x)))
+    else:
+        _x = tuple(copy.copy(x) for _ in range(k))
+        x = _x
+    return x
+
+
+# noinspection PyTypeChecker
+def ituple_2(x: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
+    """Shortcut to ``ituple_k(*, k=2)``."""
+    return ituple_k(x, k=2)
+
+
+# noinspection PyTypeChecker
+def ituple_3(x: Union[int, Tuple[int, int, int]]) -> Tuple[int, int, int]:
+    """Shortcut to ``ituple_k(*, k=3)``."""
+    return ituple_k(x, k=3)
+
+
+class _ValidIntDecider:
+    def __init__(self, mode: str, arg):
+        # (p)refix, (s)uffix, (n)one, (a)ll, (e)numeration
+        if mode not in 'psnae':
+            raise ValueError('Illegal mode, must be one of {}'
+                             .format(list('psnae')))
+        self.arg = arg
+        self.mode = mode
+
+    def __call__(self, x: int) -> bool:
+        if self.mode == 'p':
+            v = (x < self.arg)
+        elif self.mode == 's':
+            v = (x >= self.arg)
+        elif self.mode == 'n':
+            v = False
+        elif self.mode == 'a':
+            v = True
+        else:
+            v = (x in self.arg)
+        return v
+
+
+class _ValidIntSeqDecider:
+    def __init__(self, ideciders):
+        self.ideciders = ideciders
+
+    def __call__(self, x: Sequence[int]) -> bool:
+        if len(self.ideciders) != len(x):
+            raise ValueError('Expecting int sequence of length {} but got {}'
+                             .format(len(self.ideciders), len(x)))
+        for d, e in zip(self.ideciders, x):
+            if not d(e):
+                return False
+        return True
+
+
+def new_int_filter(pat: str) -> Callable[[int], bool]:
+    """
+    Returns a function that decides if a (nonnegative) integer is in a set
+    specified by ``irngpat``. Possible patterns of ``irngpat``:
+
+        - ``COMMA_SEPARATED_LIST_OF_INTEGER``: matching integers that are in
+          the enumeration of nonnegative integers
+        - ``:``: matching all integers
+        - ``INTEGER:``: matching all integers at least INTEGER
+        - ``:INTEGER``: matching all integers less than INTEGER
+
+    :param pat: matching integers
+    :return: the decider function
+    :raise ValueError: if ``pat`` is not one of the above patterns
+
+    >>> f = new_int_filter(':')
+    >>> all(map(f, range(100)))
+    True
+    >>> f = new_int_filter('0:')
+    >>> all(map(f, range(100)))
+    True
+    >>> f = new_int_filter('44:')
+    >>> any(map(f, range(0, 44))), all(map(f, range(44, 100)))
+    (False, True)
+    >>> f = new_int_filter(':44')
+    >>> all(map(f, range(0, 44))), any(map(f, range(44, 100)))
+    (True, False)
+    >>> f = new_int_filter('1,2,3,5,8')
+    >>> f(0), f(1), f(2), f(3), f(4), f(5), f(6), f(7), f(8)
+    (False, True, True, True, False, True, False, False, True)
+    >>> any(map(f, range(9, 100)))
+    False
+    >>> import random
+    >>> idomain = list(range(100))
+    >>> gpolicies = 'psean'  # (p)refix, (s)uffix, (e)umeration, (a)ll, (n)one
+    >>> for gpo in random.choices(gpolicies, k=100000):
+    ...     if gpo in 'ps':
+    ...         m = random.choice(idomain)
+    ...         if gpo == 'p':
+    ...             ans = idomain[:m]
+    ...             pat = ':{}'.format(m)
+    ...         else:
+    ...             ans = idomain[m:]
+    ...             pat = '{}:'.format(m)
+    ...     elif gpo == 'e':
+    ...         ans = random.choices(idomain, k=random.choice(range(1, 100)))
+    ...         pat = ','.join(map(str, ans))
+    ...     elif gpo == 'a':
+    ...         ans = idomain
+    ...         pat = ':'
+    ...     else:
+    ...         ans = []
+    ...         pat = ''
+    ...     f = new_int_filter(pat)
+    ...     for x in ans:
+    ...         assert f(x), 'pat={} FN_at={}'.format(pat, x)
+    ...     for x in (set(idomain) - set(ans)):
+    ...         assert not f(x), 'pat={} FP_at={}'.format(pat, x)
+    """
+    asp_patterns = [  # asp -- (a)xis (s)ub (p)attern
+        ('s', re.compile(r'^(\d+):$')),
+        ('p', re.compile(r'^:(\d+)$')),
+        ('e', re.compile(r'^(\d+(,\d+)*)$')),
+        ('a', re.compile(r'^:$')),
+        ('n', re.compile(r'^$')),
+    ]
+    for name, asppat in asp_patterns:
+        matched = asppat.match(pat)
+        if matched:
+            arg = None
+            if name == 'e':
+                arg = frozenset(map(int, matched.group(1).split(',')))
+            elif name in 'na':
+                pass
+            else:
+                arg = int(matched.group(1))
+            return _ValidIntDecider(name, arg)
+    raise ValueError('Illegal pattern `{}\''.format(pat))
+
+
+def new_ituple_filter(pat: str) -> Callable[[Sequence[int]], bool]:
+    """
+    Adapting ``new_int_filter`` to multiple nonnegative integer scenario, such
+    that the enumeration of integers must be enclosed by a pair of square
+    brackets.
+
+    :param pat: the pattern describing the decider function
+    :return: the decider function
+    :raise ValueError: if ``pat`` is illegal or ``tlen`` is not positive
+
+    >>> f = new_ituple_filter('30:')
+    >>> f((32,))
+    True
+    >>> f = new_ituple_filter('55:,65:')
+    >>> f((57,59))
+    False
+    >>> f = new_ituple_filter('[82,46,2,57,56,39,16,8,89,56,43,72,36,96,75,'
+    ...                       '93,53,57,9,16,59,41,19,31]')
+    >>> import random
+    >>> idomain = list(range(100))
+    >>> ldomain = list(range(1, 3))
+    >>> gpolicies = 'psean'  # (p)refix, (s)uffix, (e)umeration, (a)ll, (n)one
+    >>> for gpo in random.choices(gpolicies, k=1000):
+    ...    l = random.choice(ldomain)
+    ...    anss = []
+    ...    pats = []
+    ...    for _ in range(l):
+    ...        if gpo in 'ps':
+    ...            m = random.choice(idomain)
+    ...            if gpo == 'p':
+    ...                ans = idomain[:m]
+    ...                pat = ':{}'.format(m)
+    ...            else:
+    ...                ans = idomain[m:]
+    ...                pat = '{}:'.format(m)
+    ...        elif gpo == 'e':
+    ...            ans = random.choices(idomain, k=random.choice(range(1, 100)))
+    ...            pat = '[{}]'.format(','.join(map(str, ans)))
+    ...        elif gpo == 'a':
+    ...            ans = idomain
+    ...            pat = ':'
+    ...        else:
+    ...            ans = []
+    ...            pat = ''
+    ...        anss.append(tuple(ans))
+    ...        pats.append(pat)
+    ...    pat = ','.join(pats)
+    ...    f = new_ituple_filter(pat)
+    ...    allcombs = set(itertools.combinations_with_replacement(idomain, l))
+    ...    anscombs = set(itertools.product(*anss))
+    ...    for x in anscombs:
+    ...        assert f(x), 'pat={} FN_at={}'.format(pat, x)
+    ...    for x in (set(allcombs) - set(anscombs)):
+    ...        assert not f(x), 'pat={} FP_at={}'.format(pat, x)
+    """
+    axis_pattern = re.compile(
+        r'^((?P<r>\d+|\d+:|:\d+|:|)|\[(?P<e>\d+(,\d+)*)\])(,|$)')
+
+    patprefix = pat
+    kfs = []
+    while True:
+        matched = axis_pattern.match(patprefix)
+        if not matched:
+            raise ValueError('Illegal pattern `{}\''.format(pat))
+        for ky, apat in matched.groupdict().items():
+            if apat is not None:
+                break
+        else:
+            assert False
+        kfs.append(new_int_filter(apat))
+        try:
+            comma_loc = patprefix.index(',', matched.end(ky))
+        except ValueError:
+            break
+        else:
+            patprefix = patprefix[comma_loc + 1:]
+
+    return _ValidIntSeqDecider(tuple(kfs))
+
+
+def parse_cmd_kwargs(cmd_words: Sequence[str],
+                     kv_delim='=') -> Dict[str, str]:
+    d = {}
+    for w in cmd_words:
+        key, value = w.split(kv_delim, maxsplit=1)
+        d[key] = value
+    return d
+
+
+@contextmanager
+def suppress_numpy_warning(**kwargs):
+    """
+    Context manager that temporarily suppress some numpy warnings.
+    :param kwargs: the keyword arguments to be passed to ``numpy.seterr``
+    """
+    old_errstate = np.seterr(**kwargs)
+    try:
+        yield
+    finally:
+        np.seterr(**old_errstate)
