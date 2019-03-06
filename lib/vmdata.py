@@ -54,18 +54,16 @@ import hashlib
 import json
 import operator as op
 import os
-import pdb
 import re
 import shutil
 import logging
-import contextlib
+from typing import Iterable, Iterator, List, Tuple, Union
 
 import cv2
 import numpy as np
 from cachetools import LRUCache
 from filelock import FileLock
 from torch.utils.data import Dataset
-from typing import Iterable, Iterator, List, Tuple, Union
 
 import utils
 from utils import loggername as _l
@@ -307,37 +305,49 @@ class VideoDataset(Dataset):
                 batchf = self.batch_filename_by_id(batch_id)
                 if not os.path.isfile(batchf):
                     logger.info('Decompressing "{}"'.format(batchf))
-                    extract_gzip(self.batch_filename_by_id(batch_id, gzipped=True),
-                                 batchf)
+                    extract_gzip(
+                        self.batch_filename_by_id(batch_id, gzipped=True),
+                        batchf)
                     assert os.path.isfile(batchf), \
                         '"{}" not found after decompressed' \
                             .format(batchf)
                 if not self.validated_batches[batch_id]:
-                    if not check_file_integrity(batchf, self.expected_hexes[batch_id]):
-                        logger.warning('File ingerity failed at "{}"; retrying'.format(batchf))
+                    if not check_file_integrity(
+                            batchf, self.expected_hexes[batch_id]):
+                        logger.warning(
+                            'File ingerity failed at "{}"; retrying'
+                            .format(batchf))
                         # probably there's error with read last time; attempt
                         # to decompress again for once
                         os.remove(batchf)
-                        extract_gzip(self.batch_filename_by_id(batch_id, gzipped=True),
-                                     batchf)
+                        extract_gzip(
+                            self.batch_filename_by_id(batch_id, gzipped=True),
+                            batchf)
                         assert os.path.isfile(batchf), \
                             '"{}" not found after decompressed' \
                                 .format(batchf)
-                        if not check_file_integrity(batchf, self.expected_hexes[batch_id]):
-                            logger.error('File integrity failed at "{}"; RuntimeError raised'.format(batchf))
-                            raise RuntimeError('Data batch {} corrupted'.format(batch_id))
+                        if not check_file_integrity(
+                                batchf, self.expected_hexes[batch_id]):
+                            logger.error('File integrity failed at "{}"; '
+                                         'RuntimeError raised'
+                                         .format(batchf))
+                            raise RuntimeError('Data batch {} corrupted'
+                                               .format(batch_id))
                     self.validated_batches[batch_id] = True
-                    logger.info('File integrity check completed for batch {}'.format(batch_id))
+                    logger.info('File integrity check completed for batch {}'
+                                .format(batch_id))
 
                 # till here file "batchf" has been available
                 self.gz_cache[batchf] = True
 
                 shape = (self.metainfo['lens'][batch_id],) + self.frame_shape
-                logger.debug('keys before mmap cache adjustment: {}'.format(list(self.mmap_cache.keys())))
-                self.mmap_cache[batch_id] = np.memmap(str(batchf), mode='r',
-                                                      dtype=self.metainfo['dtype'],
-                                                      shape=shape)
-                logger.debug('keys after mmap cache adjustment: {}'.format(list(self.mmap_cache.keys())))
+                logger.debug('keys before mmap cache adjustment: {}'
+                             .format(list(self.mmap_cache.keys())))
+                self.mmap_cache[batch_id] = np.memmap(
+                    str(batchf), mode='r', dtype=self.metainfo['dtype'],
+                    shape=shape)
+                logger.debug('keys after mmap cache adjustment: {}'
+                             .format(list(self.mmap_cache.keys())))
         frame = np.copy(self.mmap_cache[batch_id][rel_frame_id])
         if self.transform is not None:
             frame = self.transform(frame)
@@ -349,7 +359,8 @@ class VideoDataset(Dataset):
             yield self[i]
 
     def cleanup_unused_mmapfiles(self):
-        logger = logging.getLogger(_l(__name__, self, 'cleanup_unused_mmapfiles'))
+        logger = logging.getLogger(
+            _l(__name__, self, 'cleanup_unused_mmapfiles'))
         for filename in os.listdir(self.root_tmp):
             matched = DATABATCH_FILENAME_PAT.match(filename)
             if matched:
@@ -436,7 +447,8 @@ class VideoDataset(Dataset):
         if gzipped:
             return os.path.join(self.root, 'data_batch_{}.gz'.format(batch_id))
         else:
-            return os.path.join(self.root_tmp, 'data_batch_{}'.format(batch_id))
+            return os.path.join(self.root_tmp,
+                                'data_batch_{}'.format(batch_id))
 
 
 def create_vdset(video_file, root, batch_size=1000, max_batches=None):
@@ -479,17 +491,20 @@ def create_vdset(video_file, root, batch_size=1000, max_batches=None):
             batch_id = len(lens) - 1
 
             # create memory mapped file
-            batch_filename = os.path.join(root, 'tmp', 'data_batch_{}'.format(batch_id))
+            batch_filename = os.path.join(root, 'tmp',
+                                          'data_batch_{}'.format(batch_id))
             with utils.memmapcontext(batch_filename, dtype,
                                      frames.shape, mode='w+') as mm:
                 mm[:] = frames
 
             # compute hash
             actual_hex = compute_file_integrity(batch_filename)
-            checksum_lines.append((actual_hex, os.path.basename(batch_filename)))
+            checksum_lines.append(
+                (actual_hex, os.path.basename(batch_filename)))
 
             # compress
-            batch_gzipfilename = os.path.join(root, 'data_batch_{}.gz'.format(batch_id))
+            batch_gzipfilename = os.path.join(root, 'data_batch_{}.gz'.format(
+                batch_id))
             compress_gzip(batch_filename, batch_gzipfilename)
 
             # remove the uncompressed memory mapped file
@@ -510,18 +525,20 @@ def create_vdset(video_file, root, batch_size=1000, max_batches=None):
             outfile.write('  '.join(row) + '\n')
 
     metainfo = {
-        'lens'      : lens,
+        'lens': lens,
         'resolution': resolution,
-        'channels'  : channels,
-        'dimension' : dimension,
-        'dtype'     : dtype,
+        'channels': channels,
+        'dimension': dimension,
+        'dtype': dtype,
     }
     metafile = get_dset_filename_by_ext(root, '.json')
     with open(metafile, 'w') as outfile:
         json.dump(metainfo, outfile)
 
 
-def get_normalization_stats(root: str, bw: bool = False, tags=()):
+def get_normalization_stats(root: str, bw: bool = False,
+                            tags: Tuple[Tuple[float], Tuple[float]] = (),
+                            as_rgb: bool = False):
     """
     Returns the normalization statistics (mean, std) in preprocessing step
     when loading the dataset. The normalization data presents in a ``npz``
@@ -544,8 +561,9 @@ def get_normalization_stats(root: str, bw: bool = False, tags=()):
            to the root directory, before calling this function.
     :param tags: a list of additional tags; ``bw=True`` implies
            ``tags=['bw']``
+    :param as_rgb: repeat mean and std into three times when ``bw`` is True or
+           when ``tags`` contains 'bw'
     :return: the mean and std
-    :rtype: Tuple[Tuple[float], Tuple[float]]
     """
     if bw:
         tags = ['bw']
@@ -554,6 +572,11 @@ def get_normalization_stats(root: str, bw: bool = False, tags=()):
     data = np.load(os.path.join(root, filename))
     mean = tuple(map(float, data['mean']))
     std = tuple(map(float, data['std']))
+    if 'bw' in tags and as_rgb:
+        assert len(mean) == len(std) == 1, \
+            f'len(mean)={len(mean)} len(std)={len(std)}'
+        mean *= 3
+        std *= 3
     return mean, std
 
 
