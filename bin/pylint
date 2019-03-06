@@ -1,0 +1,3 @@
+#!/bin/bash
+# Nothing but to work with direnv ...
+pylint --rcfile="$PROJ_HOME/.pylintrc" "$@"

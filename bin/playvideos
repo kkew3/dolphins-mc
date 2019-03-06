@@ -2,23 +2,20 @@
 import argparse
 import math
 import os
-import re
 import sys
 import collections
 import importlib.machinery
 import importlib.util
 import typing
-from string import ascii_lowercase, digits
-import itertools
 from functools import partial
 from typing import List, Tuple, Callable, Sequence, Optional, Iterable
 
 import numpy as np
 import cv2
 from tqdm import tqdm
-
 from blllib import Pipeline, SequentialPipeline
 
+import utils
 
 try:
     from utils import frameiter
@@ -32,12 +29,11 @@ except ImportError:
                 f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
             yield f
 
-
 if __debug__:
     import pdb
 
 
-def import_routine(filename) -> str:
+def import_routine(filename):
     name = os.path.splitext(os.path.basename(filename))[0]
     loader = importlib.machinery.SourceFileLoader(name, filename)
     spec = importlib.util.spec_from_loader(name, loader)
@@ -132,7 +128,6 @@ the returned list can be
 
                       == End of description ==
 '''.format(__keymap_instruction__).lstrip()
-
 
 GridFrameType = Sequence[Tuple[Tuple[int, int], Optional[np.ndarray]]]
 """Frame and its location in grid: [(location, frame)]"""
@@ -252,6 +247,7 @@ class IllegalStateError(BaseException):
     Several factory methods are provided for different illegal player
     operations.
     """
+
     @classmethod
     def navigate_without_paused(cls, direction):
         if direction.startswith('f'):
@@ -409,7 +405,7 @@ class VideoPlayer(object):
                 if self.cache_pointer - 1 < 1 - len(self.cache):
                     raise IllegalStateError.navigate_beyond_rewind_limit()
                 self.cache_pointer -= 1
-                #self.cache_pointer = max(1 - len(self.cache), self.cahce_pointer - 1)
+                # self.cache_pointer = max(1 - len(self.cache), self.cahce_pointer - 1)
 
     def nextf(self, n=1):
         for _ in range(n):
@@ -418,7 +414,7 @@ class VideoPlayer(object):
             if self.cache_pointer + 1 > 1:
                 raise IllegalStateError.navigate_beyond_played_frames()
             self.cache_pointer += 1
-            #self.cache_pointer = min(1, self.cache_pointer + 1)
+            # self.cache_pointer = min(1, self.cache_pointer + 1)
 
     def pprevf(self):
         if not self.paused:
@@ -488,8 +484,20 @@ def make_parser():
                               'specified, load frames in grayscale')
 
     fp_group = parser.add_argument_group('Frame processors')
-    fp_group.add_argument('-r', '--routine', action='append', metavar='FILE',
-                          help='file that defines a custom frame processor')
+    fp_group.add_argument('-r', '--routine', action='append', nargs='+',
+                          metavar=('ROUTINE_FILE', 'ROUTINE_ARG'),
+                          help='file that defines a custom frame processor, '
+                               'and optionally positional arguments (in type '
+                               'string) to be passed to the '
+                               '`frame_processor\' function defined in FILE')
+    fp_group.add_argument('-K', '--pass-as-kwargs', dest='pass_args_as_kwargs',
+                          metavar='DELIMITER', nargs='?', const='=',
+                          help='pass arguments following ROUTINE_FILE as '
+                               'keyword arguments, such that the ROUTINE_ARG '
+                               'is passed in form of KEY=VALUE (if VALUE '
+                               'contains whitespace character, it needs to '
+                               'be quoted); the equal sign can be changed '
+                               'to other symbol by specifying DELIMITER')
 
     b_group = parser.add_argument_group('Runtime behavior')
     b_group.add_argument('-b', '--freeze-once-start', dest='freeze_once_start',
@@ -544,7 +552,6 @@ for i in range(2, 1000):
     keymap['{}j'.format(i)] = 'skip', i
 for i in range(10):
     keymap['{}g'.format(i)] = 'print_progress', i
-
 
 KSeqNode = collections.namedtuple('KSeqNode', ('val', 'action', 'children'))
 
@@ -653,7 +660,8 @@ def loop(player: VideoPlayer, paused=False, startat=0,
         elif kmtree_partial:
             player.do_nothing()
         else:
-            print('Error matching key sequence `{}\''.format(''.join(kseqhistory)),
+            print('Error matching key sequence `{}\''.format(
+                ''.join(kseqhistory)),
                   file=sys.stderr)
             kseqhistory = []
             player.do_nothing()
@@ -666,7 +674,7 @@ def loop(player: VideoPlayer, paused=False, startat=0,
             reaction = 'do_nothing'
 
 
-if __name__ == '__main__':
+def main():
     args = make_parser().parse_args()
     if not args.videos:
         if not args.quiet:
@@ -712,15 +720,28 @@ if __name__ == '__main__':
              for l, cap in caps]
     fproc = []
     if args.routine:
-        for routine_file in args.routine:
+        for routine_file_args in args.routine:
+            routine_file = routine_file_args[0]
             mod = import_routine(routine_file)
+            routine_args = tuple(routine_file_args[1:])
+            if args.pass_args_as_kwargs:
+                routine_args = utils.parse_cmd_kwargs(
+                    routine_args, args.pass_args_as_kwargs)
             try:
-                fproc.append(mod.frame_processor())
+                fp_ = mod.frame_processor
             except AttributeError:
-                print('Expecting function `frame_processor` in "{}" that '
-                      'returns the callable frame processor'
-                      .format(routine_file), file=sys.stderr)
-                raise
+                raise AttributeError('Expecting function `frame_processor` '
+                                     'in "{}" that returns the callable '
+                                     'frame processor'.format(routine_file))
+            if args.pass_args_as_kwargs:
+                kvdelim = args.pass_args_as_kwargs
+                routine_args = utils.parse_cmd_kwargs(
+                    routine_file_args[1:], kvdelim)
+                fp = fp_(**routine_args)
+            else:
+                routine_args = tuple(routine_file_args[1:])
+                fp = fp_(*routine_args)
+            fproc.append(fp)
 
     print('#start_frame_id={}'.format(args.start_frame))
     player = VideoPlayer(*iters, colored=args.colored, fps=args.fps,
@@ -735,3 +756,7 @@ if __name__ == '__main__':
         player.close()
         for _, cap in caps:
             cap.release()
+
+
+if __name__ == '__main__':
+    main()

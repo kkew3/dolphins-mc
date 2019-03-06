@@ -1,0 +1,68 @@
+#!/bin/bash
+set -e
+
+show_help() {
+	cat << EOF
+Create test file for python source file FILE. Do nothing if the test file
+already exists; otherwise create a new empty file at appropriate location.
+Under both cases, the full path of the newly created test file will be echoed
+at the end.
+
+Usage: $(basename "${BASH_SOURCE[0]}") [OPTIONS...] FILE
+
+FILE               python source file to create test file
+
+OPTIONS
+
+    -h,--help      show this help and exit
+EOF
+}
+
+parse_args() {
+	srcfile=
+	while [ -n "$1" ]; do
+		case "$1" in
+			-h|--help)
+				show_help
+				exit 0
+				;;
+			*)
+				if [ -n "$srcfile" ]; then
+					echo "Illegal # of arguments" >&2
+					exit 1
+				fi
+				srcfile="$(realpath "$1")"
+				if [ ! -f "$srcfile" ]; then
+					echo "\"$srcfile\" not found" >&2
+					exit 2
+				fi
+				case "$srcfile/" in
+					"$PROJ_HOME/src/"*) ;;
+					"$PROJ_HOME/lib/"*) ;;
+					*)
+						echo "\"$srcfile\" not under \"$PROJ_HOME/src/\" or \"$PROJ_HOME/lib/\"" >&2
+						exit 2
+						;;
+				esac
+				;;
+		esac
+		shift
+	done
+}
+
+main() {
+	local testfile testfile_dir
+	testfile="$PROJ_HOME/test/$(realpath --relative-to="$PROJ_HOME" "$srcfile")"
+	testfile="$(dirname "$testfile")/test_$(basename "$testfile")"
+	if [ ! -f "$testfile" ]; then
+		testfile_dir="$(dirname "$testfile")"
+		if [ ! -d "$testfile_dir" ]; then
+			mkdir -p "$testfile_dir"
+		fi
+		touch "$testfile"
+	fi
+	echo "$testfile"
+}
+
+parse_args "$@"
+main

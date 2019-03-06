@@ -1,0 +1,14 @@
+#!/bin/bash
+if [ ! -d "$PROJ_HOME" ]; then
+	echo "PROJ_HOME not set" >&2
+	exit 1
+fi
+
+cd "$PROJ_HOME"
+while true; do
+	find -path './rt/*' \
+		-prune -o -path './bin/*' \
+		-prune -o -path './experiments/*' \
+		-prune -o -name '*.py' -print \
+	| entr -ncpd pytest test
+done
