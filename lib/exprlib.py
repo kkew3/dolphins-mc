@@ -347,12 +347,16 @@ class IniFunctionCaller:
                specified, the unary function will be taken from the type
                annotation, and if not found in annotation, default to ``str``
         :type argname2ty: typing.Dict[str, typing.Callable[ [str], typing.Any]]
+        :param argname2value: provides default value for certain arguments,
+               which will override the default value in function signature
+        :type argname2value: typing.Dict[str, typing.Any]
         :return: whatever is returned by ``f``
         """
         logger = _l(self, 'call')
         argname2inikey = kwargs.get('argname2inikey', {})
         argname2ty = kwargs.get('argname2ty', {})
         scopes = kwargs.get('scopes', list(self.cfg.sections()))
+        argname2value = kwargs.get('argname2value', {})
 
         args = collections.OrderedDict()
         kwargs = collections.OrderedDict()
@@ -374,26 +378,29 @@ class IniFunctionCaller:
             else:
                 param_queue = kwargs
 
-            inikey = argname2inikey.get(name, name)
-            for sec in scopes:
-                if inikey in self.cfg[sec]:
-                    inivalue = self.cfg[sec][inikey]
-                    if name in argname2ty:
-                        ty = argname2ty[name]
-                    elif par.annotation != inspect.Parameter.empty:
-                        ty = par.annotation
-                    else:
-                        ty = str
-                    inivalue = ty(inivalue)
-                    break
-            else:
-                if par.default != inspect.Parameter.empty:
-                    inivalue = par.default
+            try:
+                param_queue[name] = argname2value[name]
+            except KeyError:
+                inikey = argname2inikey.get(name, name)
+                for sec in scopes:
+                    if inikey in self.cfg[sec]:
+                        inivalue = self.cfg[sec][inikey]
+                        if name in argname2ty:
+                            ty = argname2ty[name]
+                        elif par.annotation != inspect.Parameter.empty:
+                            ty = par.annotation
+                        else:
+                            ty = str
+                        inivalue = ty(inivalue)
+                        break
                 else:
-                    raise KeyError('Argument `{}` (inikey={}) of '
-                                   'callable {} not specified in self.cfg'
-                                   .format(name, inikey, f))
-            param_queue[name] = inivalue
+                    if par.default != inspect.Parameter.empty:
+                        inivalue = par.default
+                    else:
+                        raise KeyError('Argument `{}` (inikey={}) of '
+                                       'callable {} not specified in self.cfg'
+                                       .format(name, inikey, f))
+                param_queue[name] = inivalue
         args = tuple(args.values())
         logger.info('Parsed args: {}'.format(args))
         logger.info('Parsed kwargs: {}'.format(kwargs))
