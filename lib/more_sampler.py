@@ -8,7 +8,7 @@ import numpy as np
 
 import torch
 from torch.utils.data.sampler import Sampler
-from typing import List, Sequence, Dict
+import typing
 
 import utils
 
@@ -17,6 +17,7 @@ class DummySampler(Sampler):
     """
     For debug.
     """
+
     def __init__(self, *args, **kwargs):
         self.indices = range(100)
 
@@ -56,7 +57,8 @@ class ListSampler(Sampler):
     """
     A wrapper over list to make it a ``Sampler``.
     """
-    def __init__(self, indices: List[int]):
+
+    def __init__(self, indices: typing.List[int]):
         self.indices = indices
 
     def __len__(self):
@@ -66,12 +68,16 @@ class ListSampler(Sampler):
         return iter(self.indices)
 
 
+SeqIndices = typing.Union[typing.Sequence[int],
+                          typing.Sequence[typing.Sequence[int]]]
+
+
 class SlidingWindowBatchSampler(Sampler):
     """
     Samples in a sliding window manner.
     """
 
-    def __init__(self, indices, window_width: int,
+    def __init__(self, indices: SeqIndices, window_width: int,
                  shuffled: bool = False, batch_size: int = 1,
                  drop_last: bool = False):
         """
@@ -81,7 +87,7 @@ class SlidingWindowBatchSampler(Sampler):
                larger than the length of ``indices`` or the length of one of
                the sublists, then that list won't be sampled
         :param shuffled: whether to shuffle sampling, but the indices order
-               within a batch is never shuffled
+               within a window is never shuffled
         :param batch_size: how many batches to yield upon each sampling
         :param drop_last: True to drop the remaining batches if the number of
                remaining batches is less than ``batch_size``
@@ -110,17 +116,18 @@ class SlidingWindowBatchSampler(Sampler):
         slidedists = map(self._calc_sliding_distance, seglens)
         startindices = map(range, slidedists)
         segid_startindices = enumerate(startindices)
-        segid_startindices = map(lambda x: utils.browadcast_value2list(*x),
+        segid_startindices = map(lambda x: utils.broadcast_value2list(*x),
                                  segid_startindices)
         segid_startindices = list(itertools.chain(*segid_startindices))
         perm = (np.random.permutation if self.shuffled else np.arange)(
-                len(segid_startindices))
+            len(segid_startindices))
         _gi = partial(op.getitem, segid_startindices)
         for i in range(0, len(segid_startindices), self.batch_size):
             ind_tosample = perm[i:i + self.batch_size]
             if not (len(ind_tosample) < self.batch_size and self.drop_last):
                 segid_startind_tosample = map(_gi, ind_tosample)
-                sampled_batches = map(self._sample_batch_once, segid_startind_tosample)
+                sampled_batches = map(
+                    self._sample_batch_once, segid_startind_tosample)
                 yield list(np.concatenate(list(sampled_batches)))
 
     def _calc_sliding_distance(self, length):
@@ -167,9 +174,9 @@ class BalancedLabelSampler(torch.utils.data.Sampler):
 
         :param indicies: range of indices to sample from the underlying
                dataset
-        :type indicies: Sequence[int]
+        :type indicies: typing.Sequence[int]
         :param labels: the labels of corresponding indicies
-        :type labels: Sequence[int]
+        :type labels: typing.Sequence[int]
 
         or:
 
@@ -192,7 +199,7 @@ class BalancedLabelSampler(torch.utils.data.Sampler):
         ul2idx = collections.defaultdict(list)
         for i, l in zip(indices, labels):
             ul2idx[l].append(i)
-        self.ul2idx = ul2idx  # type: Dict[int, List[int]]
+        self.ul2idx: typing.Dict[int, typing.List[int]] = ul2idx
         """uniq labels to indicies"""
 
     def __len__(self):
