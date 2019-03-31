@@ -27,7 +27,7 @@ def _l(*args):
     return logging.getLogger(utils.loggername(__name__, *args))
 
 
-class ExperimentLauncher(object):
+class ExperimentLauncher:
     """
     Launch experiment of which the results are to be stored in a single file.
     Returns the results directly if the experiment has been launched before
@@ -263,7 +263,7 @@ class H5ResultSaver(object):
         for name, (dt, sh) in config.items():
             dt = np.dtype(dt)
             sh = tuple(map(int, sh))
-            if len(sh) and min(sh) < 0:
+            if sh and min(sh) < 0:
                 raise ValueError('Invalid shape: {}'.format(sh))
             self.config[name] = H5ResultSaver.DsSpec(dt, sh)
         self.growth = int(kwargs.get('growth', 100))
@@ -296,7 +296,7 @@ class H5ResultSaver(object):
                                  .format(name))
             self.h5file[name][self.dslen] = data
             to_append.remove(name)
-        if len(to_append):
+        if to_append:
             raise ValueError('Missing results: {}'.format(to_append))
         self.dslen += 1
 
