@@ -20,8 +20,8 @@ class DeNormalize:
     """
 
     def __init__(self, mean, std):
-        self.mean = torch.tensor(mean, dtype=torch.float).view(-1, 1, 1)
-        self.std = torch.tensor(std, dtype=torch.float).view(-1, 1, 1)
+        self.mean = torch.tensor(mean, dtype=torch.float).reshape(-1, 1, 1)
+        self.std = torch.tensor(std, dtype=torch.float).reshape(-1, 1, 1)
 
     def __call__(self, tensor):
         tensor.mul_(self.std)
@@ -176,7 +176,7 @@ def rearrange_temporal_batch(data_batch: torch.Tensor, T: int) -> torch.Tensor:
     assert len(data_batch.size()) == 4
     assert data_batch.size(0) % T == 0
     B = data_batch.size(0) // T
-    data_batch = data_batch.view(B, T, *data_batch.shape[1:])
+    data_batch = data_batch.reshape(B, T, *data_batch.shape[1:])
     data_batch = data_batch.transpose(1, 2).contiguous()
     return data_batch.detach()  # so that ``is_leaf`` is True
 
