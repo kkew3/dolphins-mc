@@ -258,7 +258,7 @@ class MovingMNIST(torch.utils.data.Dataset):
     def __init__(self, root: str, *args: MMnistParams,
                  transform: typing.Callable = None,
                  target_transform: typing.Callable = None,
-                 generate: bool = False,
+                 generate: bool = False, train: bool = True,
                  **kwargs):
         """
         If neither ``args`` nor ``kwargs`` is specified, all sub-datasets
@@ -281,67 +281,91 @@ class MovingMNIST(torch.utils.data.Dataset):
         :param target_transform: the label transform; if not specified, each
                label will be a numby array of shape (M,) and of type int64
         :param generate: ``True`` to generate the dataset if not exists
+        :param train: if ``False``, load the test set, in which case
+               ``args``, ``kwargs``, ``generate``, and ``target_transform``
+               will be ignored, and in which case the dataset is no longer
+               labelled (so return video only)
         """
         logger = self.__l('__init__')
-        params = args
-        if not params and kwargs:
-            params = [MMnistParams(**kwargs)]
+        self.train = train
+        if train:
+            params = args
+            if not params and kwargs:
+                params = [MMnistParams(**kwargs)]
 
-        if not params:
-            params = [MMnistParams.parse(os.path.splitext(x)[0])
-                      for x in os.listdir(root) if x.endswith('.npz')]
+            if not params:
+                params = [MMnistParams.parse(os.path.splitext(x)[0])
+                          for x in os.listdir(root) if x.endswith('.npz')]
 
-        params.sort(key=str)
+            params.sort(key=str)
 
-        subs = []
-        keys = []
-        for x in params:
-            try:
-                data = np.load(os.path.join(root, str(x) + '.npz'))
-                subs.append(data)
-                keys.append(tuple(sorted(data, key=str2comb)))
-            except BaseException as err:
-                if generate:
-                    to_dump = generate_moving_mnist(x)
-                    dump_dataset(to_dump, root, x)
+            subs = []
+            keys = []
+            for x in params:
+                try:
                     data = np.load(os.path.join(root, str(x) + '.npz'))
                     subs.append(data)
                     keys.append(tuple(sorted(data, key=str2comb)))
-                else:
-                    logger.error('Failed to load {} -- {}'.format(x, err))
-                    raise
+                except BaseException as err:
+                    if generate:
+                        to_dump = generate_moving_mnist(x)
+                        dump_dataset(to_dump, root, x)
+                        data = np.load(os.path.join(root, str(x) + '.npz'))
+                        subs.append(data)
+                        keys.append(tuple(sorted(data, key=str2comb)))
+                    else:
+                        logger.error('Failed to load {} -- {}'.format(x, err))
+                        raise
 
-        self.params = tuple(params)
-        self.keys = tuple(keys)
-        self.subs = tuple(subs)
-        self.root = root
-        self.transform = transform
-        self.target_transform = target_transform
+            self.params = tuple(params)
+            self.keys = tuple(keys)
+            self.subs = tuple(subs)
+            self.root = root
+            self.transform = transform
+            self.target_transform = target_transform
 
-        # build index -- (len, sub_id, key)
-        self.lens: typing.List[typing.Tuple[int, int, str]] = []
-        for sid, (kys, data) in enumerate(zip(self.keys, self.subs)):
-            # kys: sorted keys of current sub-dataset
-            # data: sub-dataset of shape (N, T, H, W)
-            self.lens.extend((data[k].shape[0], sid, k) for k in kys)
-        self.cuml = list(np.cumsum([0] + [x[0] for x in self.lens]))
+            # build index -- (len, sub_id, key)
+            self.lens: typing.List[typing.Tuple[int, int, str]] = []
+            for sid, (kys, data) in enumerate(zip(self.keys, self.subs)):
+                # kys: sorted keys of current sub-dataset
+                # data: sub-dataset of shape (N, T, H, W)
+                self.lens.extend((data[k].shape[0], sid, k) for k in kys)
+            self.cuml = list(np.cumsum([0] + [x[0] for x in self.lens]))
+        else:
+            self.data = np.load(os.path.join(root, 'mnist_test_seq.npy'))
 
     def __len__(self):
-        return self.cuml[-1]
+        try:
+            return self.cuml[-1]
+        except AttributeError:
+            return self.data.shape[0]
 
     def __getitem__(self, index):
-        if index < 0:
-            index += len(self)
+        try:
+            if index < 0:
+                index += len(self)
+            loc = bisect.bisect(self.cuml, index) - 1
+            _, sid, k = self.lens[loc]
+            video = self.subs[sid][k][index - self.cuml[loc]]
+            if self.transform:
+                video = self.transform(video)
+            label = np.array(str2comb(k))
+            if self.target_transform:
+                label = self.target_transform(label)
+            return video, label
+        except AttributeError:
+            video = self.data[index]
+            if self.transform:
+                video = self.transform(video)
+            return video
 
-        loc = bisect.bisect(self.cuml, index) - 1
-        _, sid, k = self.lens[loc]
-        video = self.subs[sid][k][index - self.cuml[loc]]
-        if self.transform:
-            video = self.transform(video)
-        label = np.array(str2comb(k))
-        if self.target_transform:
-            label = self.target_transform(label)
-        return video, label
+    def __repr__(self):
+        if self.train:
+            return ('{}(root={}, train=True, params={})'
+                    .format(type(self).__name__,
+                            self.root, list(self.params)))
+        return ('{}(root={}, train=False)'
+                .format(type(self).__name__, self.root))
 
     def __l(self, method_name: str):
         return _l(self, method_name)
