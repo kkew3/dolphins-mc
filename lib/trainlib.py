@@ -22,6 +22,7 @@ def _l(*args):
 _Predicate = typing.Callable[[typing.Any], bool]
 _EBProgress = typing.Tuple[int, int]
 
+
 def action_fired(fired: typing.Union[int, _Predicate]) -> _Predicate:
     """
     Returns a callable that returns a bool indicating whether an action should
@@ -174,6 +175,7 @@ class StatSaver:
             _logger.debug('{} written at progress "{}"'
                           .format(tofile, progress))
             return tofile
+        return None
 
 
 class FieldChangedError(BaseException):
@@ -249,6 +251,7 @@ class CsvStatSaver:
                     _logger.debug('{} appended at progress "{}"'
                                   .format(tofile, progress))
             return tofile
+        return None
 
 
 def load_stat(statdir: str, statname_tmpl: str, progress: tuple,
@@ -377,10 +380,10 @@ class BasicTrainer:
     | fired          | fired_always         | The firing policy of         |
     |                |                      | CheckpointSaver and          |
     |                |                      | StatSaver in loop train      |
-    | statdir_$STAGE | $basedir/stat_$STAGE | Directory to hold statistics |
+    | statdir_STAGE  | $basedir/stat_STAGE  | Directory to hold statistics |
     |                |                      | produced in loop STAGE other |
     |                |                      | than train                   |
-    | fired_$STAGE   | fired_always         | The firing policy of         |
+    | fired_STAGE    | fired_always         | The firing policy of         |
     |                |                      | StatSaver in loop STAGE      |
     |                |                      | other than train             |
     +----------------+----------------------+------------------------------+
@@ -427,10 +430,13 @@ class BasicTrainer:
                would be ``(E+1, 0)``, and will overwrite existing npy
                statistics and pth checkpoint files.
         :param freeze_net_when_necessary: if True, freeze the network
-               parameters whenever ``self.__stage`` is not 'train', and
+               parameters whenever ``stage`` is not 'train', and
                always freeze the network if there's no 'train' in
                ``self.run_stages``. Do not specify as ``True`` if in non-train
-               stages the network weights are used for backpropagation
+               stages the network weights are used for backpropagation. This
+               option can be useful if the inputs requires gradient
+               backpropagation, in which case ``torch.no_grad`` cannot be
+               used
         """
         self.device = device
         self.net = net
@@ -444,23 +450,6 @@ class BasicTrainer:
         self._origrg = {}
         """Used to freeze network when necessary"""
         self._frozen_always = False
-
-        # expose (readonly) current training progress
-        self.__stage: str = None  # current training stage
-        self.__epoch: int = None
-        self.__batch: int = None
-
-    @property
-    def stage(self):
-        return self.__stage
-
-    @property
-    def epoch(self):
-        return self.__epoch
-
-    @property
-    def batch(self):
-        return self.__batch
 
     @property
     def default_basedir(self):
@@ -482,7 +471,7 @@ class BasicTrainer:
         defaults_train = {
             'statdir': os.path.join(getattr(self, 'basedir'), 'stat'),
             'savedir': os.path.join(getattr(self, 'basedir'), 'save'),
-            'fired'  : fired_always,
+            'fired': fired_always,
         }
         for stage in self.run_stages:
             if stage == 'train':
@@ -531,7 +520,8 @@ class BasicTrainer:
                 saver = getattr(self, 'statsaver_{}'.format(stage))
             except AttributeError:
                 saver = StatSaver(getattr(self, 'statdir_{}'.format(stage)),
-                                  fired=getattr(self, 'fired_{}'.format(stage)),
+                                  fired=getattr(
+                                      self, 'fired_{}'.format(stage)),
                                   statname_tmpl=type(self).statname_tmpl)
                 setattr(self, 'statsaver_{}'.format(stage), saver)
         return saver
@@ -626,65 +616,63 @@ class BasicTrainer:
             epoch0 = 0
 
         try:
-            for self.__epoch in range(epoch0, self.max_epoch):
+            for epoch in range(epoch0, self.max_epoch):
                 self.before_epoch()
-                for self.__stage in self.run_stages:
-                    logger.debug('Begin stage {}'.format(self.__stage))
-                    if self.__stage == 'train':
+                for stage in self.run_stages:
+                    logger.debug('Begin stage {}'.format(stage))
+                    if stage == 'train':
                         self._trained_once = True
-                        if (self.freeze_net_when_necessary
-                                and not self._frozen_always):
+                        if (self.freeze_net_when_necessary and
+                                not self._frozen_always):
                             self.melt_net()
                         self.net.train()
-                        for self.__batch, it in enumerate(
-                                self.__get_loader(self.__stage)):
+                        for batch, it in enumerate(self.__get_loader(stage)):
                             # `it` is `(inputs, targets)`
-                            self.__before_batch(self.__stage)
-                            stats = self.__once(self.__stage, *it)
+                            self.__before_batch(stage)
+                            stats = self.__once(stage, *it)
                             if stats:
                                 stats_to_log = self._organize_stats(stats)
                                 stats_to_log_repr = list(stats_to_log.items())
                                 logger.info('epoch{}/{} batch{}: {}'
-                                            .format(self.__epoch, self.__stage,
-                                                    self.__batch,
+                                            .format(epoch, stage, batch,
                                                     stats_to_log_repr))
-                                statsaver = self.__statsaver(self.__stage)
-                                statsaver((self.__epoch, self.__batch),
-                                          **stats_to_log)
+                                statsaver = self.__statsaver(stage)
+                                statsaver((epoch, batch), **stats_to_log)
                             else:
                                 logger.info('epoch{}/{} batch{}'
-                                            .format(self.__epoch,
-                                                    self.__stage,
-                                                    self.__batch))
+                                            .format(epoch, stage, batch))
                             checkpointsaver = self.__checkpointsaver()
-                            checkpointsaver((self.__epoch, self.__batch))
-                            self.__after_batch(self.__stage)
+                            checkpointsaver((epoch, batch))
+                            self.__after_batch(stage)
                     else:
-                        if (self.freeze_net_when_necessary
-                                and not self._frozen_always):
+                        if (self.freeze_net_when_necessary and
+                                not self._frozen_always):
                             self.freeze_net()
                         self.net.eval()
-                        for self.__batch, it in enumerate(
-                                self.__get_loader(self.__stage)):
+                        for batch, it in enumerate(self.__get_loader(stage)):
                             # `it` is `(inputs, targets)`
-                            self.__before_batch(self.__stage)
-                            stats = self.__once(self.__stage, *it)
+                            self.__before_batch(stage)
+                            stats = self.__once(stage, *it)
                             if stats:
                                 stats_to_log = self._organize_stats(stats)
                                 stats_to_log_repr = list(stats_to_log.items())
                                 logger.info('epoch{}/{} batch{}: {}'
-                                            .format(self.__epoch, self.__stage,
-                                                    self.__batch,
+                                            .format(epoch, stage, batch,
                                                     stats_to_log_repr))
-                                statsaver = self.__statsaver(self.__stage)
-                                statsaver((self.__epoch, self.__batch),
-                                          **stats_to_log)
+                                statsaver = self.__statsaver(stage)
+                                statsaver((epoch, batch), **stats_to_log)
                             else:
+                                try:
+                                    if self.stat_names:
+                                        logger.info('Claimed to return {} '
+                                                    'stats but got none'
+                                                    .format(len(
+                                                        self.stat_names)))
+                                except AttributeError:
+                                    pass
                                 logger.info('epoch{}/{} batch{}'
-                                            .format(self.__epoch,
-                                                    self.__stage,
-                                                    self.__batch))
-                            self.__after_batch(self.__stage)
+                                            .format(epoch, stage, batch))
+                            self.__after_batch(stage)
                 self.after_epoch()
             logger.info('Returns successfully')
             self.teardown()
@@ -709,3 +697,168 @@ class BasicTrainer:
                            'len(stats) ({})'
                            .format(len(stat_names), len(stats)))
         return collections.OrderedDict(zip(stat_names, stats))
+
+
+class BasicEvaluator(BasicTrainer):
+    """
+    Abstract base evaluator adapting the framework by ``BasicTrainer`` such
+    that it's dedicated to evaluating an existing network checkpoint.
+    Please note the difference of the following convention with that of
+    ``BasicTrainer``.
+
+    +-----+--------------------+----------------------------------------------+
+    | Man |      Function      |                 Description                  |
+    +=====+====================+==============================================+
+    | T   | STAGE_once         | Minibatch in loop STAGE                      |
+    | T   | get_STAGEloader    | Dataloader of (inputs,targets) in loop STAGE |
+    | F   | before_batch_STAGE | Launched before STAGE_once                   |
+    | F   | after_batch_STAGE  | Launched after STAGE_once                    |
+    +-----+--------------------+----------------------------------------------+
+
+    where "Man" denotes "Mandatory". This table shows the signature. For
+    example, if a function has signature ``(x, y) -> z``, then it accepts two
+    positional arguments ``x`` and ``y``, and returns ``z``.
+
+    +--------------------+-----------------------------------+
+    |      Function      |             Signature             |
+    +====================+===================================+
+    | STAGE_once         | (inputs, targets) -> stats        |
+    | get_STAGEloader    | () -> Iterator[(inputs, targets)] |
+    | before_batch_STAGE | () -> None                        |
+    | after_batch_STAGE  | () -> None                        |
+    +--------------------+-----------------------------------+
+
+    Instance variables need to be specified before ``init_monitors`` is
+    called (by default ``init_monitors`` is called within ``setup``, which in
+    turn is called at the beginning of ``run``):
+
+    +----------------+----------------------+------------------------------+
+    |    Variable    |       Default        |         Description          |
+    +================+======================+==============================+
+    | eval_basedir   | $basedir/eval_epEP   | Directory to hold evaluation |
+    |                |                      | statistics, where EP denotes |
+    |                |                      | the first element of the     |
+    |                |                      | ``progress`` tuple specified |
+    |                |                      | at ``__init__``. If this     |
+    |                |                      | attribute is to set manually |
+    |                |                      | it must be prefixed          |
+    |                |                      | "$basedir"                   |
+    | savedir        | $basedir/save        | Directory to hold            |
+    |                |                      | checkpoints produced in      |
+    |                |                      | previous loop train          |
+    | statdir_STAGE  | $basedir             | Directory to hold statistics |
+    |                | /stat_$STAGE         | produced in loop STAGE other |
+    |                |                      | than train                   |
+    | fired_STAGE    | fired_always         | The firing policy of         |
+    |                |                      | StatSaver in loop STAGE      |
+    |                |                      | other than train             |
+    | ignore_existing_eval_basedir | False  | If ``False``, and if         |
+    |                |                      | ``eval_basedir`` already     |
+    |                |                      | exists, error will be raised |
+    |                |                      | to prevent overwriting       |
+    |                |                      | possible existing results    |
+    +----------------+----------------------+------------------------------+
+
+    where ``basedir``, the ``basedir`` directory when previously training,
+    must be provided at ``__init__``.
+
+    Mandatory instance variables need to be specified before ``run``:
+
+    +------------+------------------------------------------------+
+    |  Variable  |                  Description                   |
+    +============+================================================+
+    | run_stages | The loops to run in each epoch; 'train' must   |
+    |            | not be specified as one of them                |
+    | stat_names | The names of statistics returned by STAGE_once |
+    +------------+------------------------------------------------+
+    """
+
+    def __init__(self, net: nn.Module, progress: _EBProgress,
+                 basedir: str, freeze_net_when_necessary: bool = False,
+                 device: str = 'cpu'):
+        """
+        :param net: the network to evaluate
+        :param progress: which to evaluate, must be of form (EPOCH, BATCH)
+        :param basedir: the ``basedir`` of the original trainer
+        :param freeze_net_when_necessary: if True, freeze the network
+               parameters whenever ``stage`` is not 'train', and
+               always freeze the network if there's no 'train' in
+               ``self.run_stages``. Do not specify as ``True`` if in non-train
+               stages the network weights are used for backpropagation. This
+               option can be useful if the inputs requires gradient
+               backpropagation, in which case ``torch.no_grad`` cannot be
+               used
+        :param device: where to evaluate
+        """
+        super().__init__(net, progress[0] + 2, device=device,
+                         progress=progress)
+        if not os.path.isdir(basedir):
+            raise FileNotFoundError('basedir "{}" not found'.format(basedir))
+        self.basedir = basedir
+
+    def remove_these_vars(self, variables: typing.Iterable[str]) -> None:
+        """
+        Helper method to remove unnecessary instance variables brought
+        from the trainer. ``AttributeError`` won't be triggered for
+        non-existent variable names in ``variables``.
+
+        :param variables: a list of instance variable names to remove
+        """
+        for var in variables:
+            with contextlib.suppress(AttributeError):
+                delattr(self, var)
+
+    @property
+    def default_basedir(self):
+        raise AttributeError('No default basedir available')
+
+    @property
+    def default_eval_basedir(self):
+        return 'eval_ep{}'.format(self.progress[0])
+
+    def init_monitors(self):
+        # eval_basedir
+        ignore_existing_eval_basedir = \
+            getattr(self, 'ignore_existing_eval_basedir', False)
+        if not hasattr(self, 'eval_basedir'):
+            setattr(self, 'eval_basedir', os.path.join(
+                self.basedir, self.default_eval_basedir))
+            if os.path.exists(getattr(self, 'eval_basedir')) \
+                    and not ignore_existing_eval_basedir:
+                raise FileExistsError('Default eval_basedir "{}" already '
+                                      'exists; try setting a different name'
+                                      .format(getattr(self, 'eval_basedir')))
+        elif not os.path.samefile(os.path.commonprefix((
+                getattr(self, 'eval_basedir'), self.basedir)), self.basedir):
+            raise ValueError('Expecting eval_basedir to be a child of '
+                             'self.basedir "{}", but got "{}"'
+                             .format(getattr(self, 'eval_basedir'),
+                                     self.basedir))
+        elif os.path.exists(getattr(self, 'eval_basedir')) \
+                    and not ignore_existing_eval_basedir:
+            raise FileExistsError('eval_basedir "{}" already exists; '
+                                  'try setting a different name'
+                                  .format(getattr(self, 'eval_basedir')))
+
+        # savedir
+        if not hasattr(self, 'savedir'):
+            setattr(self, 'savedir', os.path.join(
+                getattr(self, 'basedir'), 'save'))
+
+        # run_stages and others
+        for stage in self.run_stages:
+            if stage == 'train':
+                raise ValueError('Expecting no \'train\' in `self.run_stages`'
+                                 ', but got {}'.format(self.run_stages))
+            if not hasattr(self, 'statdir_{}'.format(stage)):
+                setattr(self, 'statdir_{}'.format(stage),
+                        os.path.join(getattr(self, 'eval_basedir'),
+                                     'stat_{}'.format(stage)))
+            if not hasattr(self, 'fired_{}'.format(stage)):
+                setattr(self, 'fired_{}'.format(stage), fired_always)
+
+    def prepare_net(self, ext_savedir: str = None) -> None:
+        savedir = ext_savedir if ext_savedir else getattr(self, 'savedir')
+        load_checkpoint(self.net, savedir, type(self).checkpoint_tmpl,
+                        self.progress, map_location=self.device)
+        self.net.to(self.device)
