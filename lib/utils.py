@@ -5,13 +5,17 @@ import itertools
 import os
 import re
 import sys
-import torch
 from contextlib import contextmanager
 import copy
+import typing
 
-from typing import Callable, Sequence, Any, Iterable, Union, Tuple, Dict
 import numpy as np
 import cv2
+import torch
+
+
+T1 = typing.TypeVar('T1')
+T2 = typing.TypeVar('T2')
 
 
 @contextmanager
@@ -46,9 +50,9 @@ def videowritercontext(filename, fourcc, fps, wh):
 
 def frameiter(cap: cv2.VideoCapture, n: int = None, rgb: bool = True):
     """
-    Yield frames in numpy array of shape (H, W, 3) where '3' stands for RGB, 'H'
-    the height and 'W' the width. The number of frames is at most ``n``. If
-    ``n`` is not specified, it's default to infinity.
+    Yield frames in numpy array of shape (H, W, 3) where '3' stands for RGB,
+    'H' the height and 'W' the width. The number of frames is at most ``n``.
+    If ``n`` is not specified, it's default to infinity.
 
     :param cap: the video capture object
     :param n: at most this number of frames are to be yielded; ``n`` should be
@@ -90,7 +94,8 @@ def aligned_enum(max_count):
 
     :param max_count: alignment width
     :type max_count: int
-    :return: function that align the index of each tuple yielded by `enumerate`
+    :return: function that align the index of each tuple yielded by
+             `enumerate`
     """
     width = int(np.ceil(np.log10(max_count)))
 
@@ -116,9 +121,9 @@ def memmapcontext(filename, dtype, shape, offset=0, mode='r'):
     :param filename: the memory mapped filename
     :type filename: str
     :param dtype: data type
-    :type dtype: Union[str, np.dtype]
+    :type dtype: typing.Union[str, np.dtype]
     :param shape: data shape
-    :type shape: Tuple[int]
+    :type shape: typing.Tuple[int]
     :param offset: offset in units of number of elements
     :param mode: the file open mode, choices: {'r', 'r+', 'w+', 'c'}; see
            https://docs.scipy.org/doc/numpy/reference/generated/numpy.memmap.html#numpy.memmap
@@ -132,7 +137,8 @@ def memmapcontext(filename, dtype, shape, offset=0, mode='r'):
         del mm
 
 
-def fcompose(funcs: Sequence[Callable], star=False) -> Callable:
+def fcompose(funcs: typing.Sequence[typing.Callable], star=False) \
+        -> typing.Callable:
     """
     Compose any number of callable objects into one callable object, which is
     the functional composition of all the objects from left to right. Each
@@ -172,7 +178,7 @@ def fcompose(funcs: Sequence[Callable], star=False) -> Callable:
     return _wrapped
 
 
-def fstarcompose(funcs) -> Callable:
+def fstarcompose(funcs) -> typing.Callable:
     """
     Same as ``fcompose``, except for doing star operation at the invocation of
     each callable objects.
@@ -203,9 +209,10 @@ def inf_powerof(num: int, pow: int) -> int:
     return num - num % pow
 
 
-def browadcast_value2list(value: Any, iterable: Iterable) -> Iterable:
+def broadcast_value2list(value: T1, iterable: typing.Iterable[T2]) \
+        -> typing.Iterator[typing.Tuple[T1, T2]]:
     """
-    >>> list(browadcast_value2list(4, [2, 3, 5]))
+    >>> list(broadcast_value2list(4, [2, 3, 5]))
     [(4, 2), (4, 3), (4, 5)]
     """
     return map(lambda x: (value, x), iterable)
@@ -270,7 +277,7 @@ def jacobian(outputs: torch.Tensor, inputs: torch.Tensor,
     return gradmaps
 
 
-def ituple_k(x: Union[int, Sequence[int]], k=2) -> Sequence[int]:
+def ituple_k(x: typing.Union[int, typing.Sequence[int]], k=2) -> typing.Sequence[int]:
     """
     Expand an integer to a k-tuple of that integer if it's not already a
     k-tuple. Note that the *integer* type is not enforced -- it only appears
@@ -301,13 +308,13 @@ def ituple_k(x: Union[int, Sequence[int]], k=2) -> Sequence[int]:
 
 
 # noinspection PyTypeChecker
-def ituple_2(x: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
+def ituple_2(x: typing.Union[int, typing.Tuple[int, int]]) -> typing.Tuple[int, int]:
     """Shortcut to ``ituple_k(*, k=2)``."""
     return ituple_k(x, k=2)
 
 
 # noinspection PyTypeChecker
-def ituple_3(x: Union[int, Tuple[int, int, int]]) -> Tuple[int, int, int]:
+def ituple_3(x: typing.Union[int, typing.Tuple[int, int, int]]) -> typing.Tuple[int, int, int]:
     """Shortcut to ``ituple_k(*, k=3)``."""
     return ituple_k(x, k=3)
 
@@ -339,7 +346,7 @@ class _ValidIntSeqDecider:
     def __init__(self, ideciders):
         self.ideciders = ideciders
 
-    def __call__(self, x: Sequence[int]) -> bool:
+    def __call__(self, x: typing.Sequence[int]) -> bool:
         if len(self.ideciders) != len(x):
             raise ValueError('Expecting int sequence of length {} but got {}'
                              .format(len(self.ideciders), len(x)))
@@ -349,7 +356,7 @@ class _ValidIntSeqDecider:
         return True
 
 
-def new_int_filter(pat: str) -> Callable[[int], bool]:
+def new_int_filter(pat: str) -> typing.Callable[[int], bool]:
     """
     Returns a function that decides if a (nonnegative) integer is in a set
     specified by ``irngpat``. Possible patterns of ``irngpat``:
@@ -429,7 +436,7 @@ def new_int_filter(pat: str) -> Callable[[int], bool]:
     raise ValueError('Illegal pattern `{}\''.format(pat))
 
 
-def new_ituple_filter(pat: str) -> Callable[[Sequence[int]], bool]:
+def new_ituple_filter(pat: str) -> typing.Callable[[typing.Sequence[int]], bool]:
     """
     Adapting ``new_int_filter`` to multiple nonnegative integer scenario, such
     that the enumeration of integers must be enclosed by a pair of square
@@ -509,8 +516,8 @@ def new_ituple_filter(pat: str) -> Callable[[Sequence[int]], bool]:
     return _ValidIntSeqDecider(tuple(kfs))
 
 
-def parse_cmd_kwargs(cmd_words: Sequence[str],
-                     kv_delim='=') -> Dict[str, str]:
+def parse_cmd_kwargs(cmd_words: typing.Sequence[str],
+                     kv_delim='=') -> typing.Dict[str, str]:
     d = {}
     for w in cmd_words:
         key, value = w.split(kv_delim, maxsplit=1)
@@ -529,3 +536,28 @@ def suppress_numpy_warning(**kwargs):
         yield
     finally:
         np.seterr(**old_errstate)
+
+
+def check_shape(array, *ref_shapes: typing.Sequence[typing.Optional[int]]):
+    """
+    Check shape of ``array` against a number of expected shapes. Fail the test
+    if none of ``ref_shapes`` matches the shape of ``array``, or return the
+    index of first match in ``ref_shapes``.
+
+    :param array: any type with attribute ``shape`` that returns a sequence
+           of ``int``s, or the ``shape`` itself if ``hasattr(array, 'shape')``
+           fails
+    :param ref_shapes: referential shape, where ``None`` denotes any int
+    :return: the index of the first matched ``ref_shapes``
+    :raise ValueError: if none matches
+    """
+    try:
+        sh: typing.Sequence[int] = array.shape
+    except AttributeError:
+        sh: typing.Sequence[int] = array
+    for i, ref in enumerate(ref_shapes):
+        if len(sh) == len(ref) and all(x == y for x, y in zip(sh, ref)
+                                       if y is not None):
+            return i
+    raise ValueError('Unexpected shape {}; should be one of {}'
+                     .format(sh, list(ref_shapes)))
