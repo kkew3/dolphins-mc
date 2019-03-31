@@ -1,54 +1,37 @@
 #!/bin/bash
-set -e
-
-if cut --help > /dev/null 2>&1 && cut --help | grep -q 'GNU coreutils'; then
-	# using GNU cut
-	_cut=cut
-elif which gcut > /dev/null 2>&1; then
-	# using BSD cut, but GNU cat is available as gcut
-	_cut=gcut
-else
-	echo "GNU coreutils cut not found; aborted"
-	exit 1
-fi
-
 show_help() {
 	cat << EOF
-Sort the input filenames of pattern
-/^.\\+_\\([0-9]\\+\\)\\(_\\([0-9]\\+\\)\\)\\?\\(\\.[^\\.]\\+\\)\\?$/
-from stdin with respect to (\\1, \\3) if \\2 exists else (\\1,) numerically
-in ascending order. The output is passed on to stdout. Patterns not matched
-will be removed from stdin, and will not appear in stdout.
+usage: $(basename "${BASH_SOURCE[0]}") [OPTIONS..]
 
-Usage: $(basename "${BASH_SOURCE[0]}") [OPTION]
+OPTIONS
 
-OPTION
-
-    -1            specify the checkpoint name pattern as
-                  "\${rest1}_\${epoch}\${rest2}"
-    -2            specify the checkpoint name pattern as
-                  "\${rest1}_\${epoch}_\${batch}\${rest2}"; this is the default
-                  if not specified
-    -h, --help    show this help and exit
+    -1         sort checkpoints with only EPOCH in filename
+    -2         sort checkpoints with EPOCH and BATCH in filename (default)
+    -h,--help  show this help and exit
 EOF
 }
 
-cpmode="epoch_batch"
-if [ "$1" = "-h" -o "$1" = "--help" ]; then
-	show_help
-	exit 0
-elif [ "$1" = "-1" ]; then
-	cpmode="epoch_only"
-elif [ "$1" = "-2" ]; then
-	cpmode="epoch_batch"
+if [ -n "$2" ]; then
+	echo "Expecting only one argument" >&2
+	exit 1
 fi
-
-if [ "$cpmode" = "epoch_only" ]; then
-	sed -n 's/^\(\(.\+\)_\([0-9]\+\)\(\.[^\.]\+\)\?$/\1\x0\3/p' \
-	| sort -t $'\0' -k2,2n \
-	| $_cut -d '' -f1
-else
-	sed -n 's/^\(\(.\+\)_\([0-9]\+\)_\([0-9]\+\)\(\.[^\.]\+\)\?\)$/\1\x0\3\x0\4/p' \
-	| sort -t $'\0' -k2,2n -k3,3n \
-	| $_cut -d '' -f1
-fi
+case "$1" in
+	''|-2)
+		perl -lne '/^.*_(\d+)_(\d+)\.[^\.]+$/ and print join("\t", $_,$1,$2)' \
+		| sort -t$'\t' -k2n -k3n \
+		| cut -f1
+		;;
+	-1)
+		perl -lne '/^.*_(\d+)\.[^\.]+$/ and print join("\t", $_,$1)' \
+		| sort -t$'\t' -k2n \
+		| cut -f1
+		;;
+	-h|--help)
+		show_help
+		exit 0
+		;;
+	*)
+		echo 'Unrecognized option `'"$1'" >&2
+		exit 1
+		;;
+esac
