@@ -383,16 +383,23 @@ class IniFunctionCaller:
             except KeyError:
                 inikey = argname2inikey.get(name, name)
                 for sec in scopes:
-                    if inikey in self.cfg[sec]:
-                        inivalue = self.cfg[sec][inikey]
-                        if name in argname2ty:
-                            ty = argname2ty[name]
-                        elif par.annotation != inspect.Parameter.empty:
-                            ty = par.annotation
-                        else:
-                            ty = str
-                        inivalue = ty(inivalue)
-                        break
+                    try:
+                        opts = self.cfg[sec]
+                    except KeyError:
+                        logger.debug('section "{}" not found; skipped'
+                                     .format(sec))
+                        pass
+                    else:
+                        if inikey in opts:
+                            inivalue = opts[inikey]
+                            if name in argname2ty:
+                                ty = argname2ty[name]
+                            elif par.annotation != inspect.Parameter.empty:
+                                ty = par.annotation
+                            else:
+                                ty = str
+                            inivalue = ty(inivalue)
+                            break
                 else:
                     if par.default != inspect.Parameter.empty:
                         inivalue = par.default
