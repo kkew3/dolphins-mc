@@ -1,6 +1,9 @@
 """
-Defines Moving MNIST dataset and function to generate moving mnist.
-Adapted from: https://gist.github.com/tencia/afb129122a64bde3bd0c
+Defines Moving MNIST dataset (with or without Gaussian noise) and function to
+generate moving mnist.
+Adapted from: https://gist.github.com/tencia/afb129122a64bde3bd0c.
+
+Also defines Moving MNIST dataset with caustic pattern.
 """
 
 import os
@@ -9,6 +12,7 @@ import collections
 import itertools
 import bisect
 import typing
+from configparser import ConfigParser
 import logging
 
 import torch.utils.data
@@ -94,12 +98,12 @@ def load_dataset() -> LabelImgsDict:
     Load MNIST dataset grouped by label. Requires existence of
     MNIST dataset under PYTORCH_DATA_HOME.
     """
-    root = os.path.join(os.environ['PYTORCH_DATA_HOME'], 'MNIST')
+    root = os.path.join(os.environ['PYTORCH_DATA_HOME'])
     mnist = torchvision.datasets.MNIST(root=root, train=USE_MNIST_TRAIN,
                                        download=False)
     mnist_dict = collections.defaultdict(list)
     for img, label in iter_(mnist):
-        mnist_dict[label.item()].append(np.array(img))
+        mnist_dict[label].append(np.asarray(img))
     for label in mnist_dict:
         mnist_dict[label] = np.stack(mnist_dict[label])
     return mnist_dict
@@ -137,6 +141,7 @@ def get_random_images(mnist_dict: LabelImgsDict,
     return images
 
 
+# pylint: disable=too-many-locals,too-many-nested-blocks
 def generate_moving_mnist(params: MMnistParams) -> GroupedMMnistDataset:
     """
     Returns the Moving MNIST dataset to dump. The numpy array under each key
@@ -155,7 +160,7 @@ def generate_moving_mnist(params: MMnistParams) -> GroupedMMnistDataset:
     for cid, cb in enumerate(combs):
         mmnist[cb] = []
         for k in range(params.seqs_per_class):
-            # randomly generate direc/speed/position,
+            # randomly generate direction/speed/position,
             # calculate velocity vector
             direcs = np.pi * (np.random.rand(params.nums_per_image) * 2 - 1)
             speeds = np.random.randint(5, size=params.nums_per_image) + 2
@@ -193,8 +198,8 @@ def generate_moving_mnist(params: MMnistParams) -> GroupedMMnistDataset:
 
                 canvas += np.random.randn(*canvas.shape) * params.noise_std
                 image = (canvas * 255) \
-                    .astype(np.uint8) \
                     .clip(0, 255) \
+                    .astype(np.uint8) \
                     .transpose(2, 1, 0)
                 assert image.shape[-1] == 1, str(image.shape)
                 image = image[..., 0]
@@ -250,11 +255,13 @@ def dump_dataset(dataset: GroupedMMnistDataset, root: str,
                        .format(subroot))
 
 
+# pylint: disable=too-many-instance-attributes
 class MovingMNIST(torch.utils.data.Dataset):
     """
     This is a labeled dataset for Moving MNIST.
     """
 
+    # pylint: disable=too-many-locals
     def __init__(self, root: str, *args: MMnistParams,
                  transform: typing.Callable = None,
                  target_transform: typing.Callable = None,
@@ -289,7 +296,7 @@ class MovingMNIST(torch.utils.data.Dataset):
         logger = self.__l('__init__')
         self.train = train
         if train:
-            params = args
+            params = list(args)
             if not params and kwargs:
                 params = [MMnistParams(**kwargs)]
 
@@ -317,7 +324,7 @@ class MovingMNIST(torch.utils.data.Dataset):
                         logger.error('Failed to load {} -- {}'.format(x, err))
                         raise
 
-            self.params = tuple(params)
+            self.params: typing.Tuple[MMnistParams, ...] = tuple(params)
             self.keys = tuple(keys)
             self.subs = tuple(subs)
             self.root = root
@@ -332,7 +339,9 @@ class MovingMNIST(torch.utils.data.Dataset):
                 self.lens.extend((data[k].shape[0], sid, k) for k in kys)
             self.cuml = list(np.cumsum([0] + [x[0] for x in self.lens]))
         else:
-            self.data = np.load(os.path.join(root, 'mnist_test_seq.npy'))
+            k = 'mnist_test_seq'
+            self.data = np.load(os.path.join(
+                root, 'testset', '{}.npz'.format(k)))[k]
 
     def __len__(self):
         try:
@@ -367,5 +376,181 @@ class MovingMNIST(torch.utils.data.Dataset):
         return ('{}(root={}, train=False)'
                 .format(type(self).__name__, self.root))
 
+    @property
+    def default_normalize(self) -> torchvision.transforms.Normalize:
+        if len(self.params) > 1:
+            raise AttributeError('no default_normalize when there are more '
+                                 'than one ({}) params'
+                                 .format(len(self.params)))
+        cfg = ConfigParser()
+        nmlstats = os.path.join(self.root, 'nml-stats.ini')
+        if not cfg.read(nmlstats):
+            raise FileNotFoundError('"{}" not found'.format(nmlstats))
+        sec_name = str(self.params[0])
+        mean = cfg.getfloat(sec_name, 'mean')
+        std = cfg.getfloat(sec_name, 'std')
+        normalize = torchvision.transforms.Normalize((mean,), (std,))
+        return normalize
+
     def __l(self, method_name: str):
         return _l(self, method_name)
+
+
+class CausticMovingMNIST(torch.utils.data.Dataset):
+    """
+    Applies caustic pattern over a ``MovingMNIST`` dataset. It assumes that
+    the caustic pattern is independent of Moving MNIST; therefore the
+    variance of the transformed MovingMNIST is the sum of the variances of
+    plain MovingMNIST and that of the caustic pattern.
+    """
+
+    CAUSTIC_SOURCE_BASEDIR = os.path.join(
+        os.environ['PYTORCH_DATA_HOME'],
+        'MovingMNIST',
+        'causticrender',
+    )
+    CAUSTIC_ASSIGNMENT_BASEDIR = os.path.join(
+        CAUSTIC_SOURCE_BASEDIR,
+        'assignment',
+    )
+    DEFAULT_CAUSTIC_SOURCE = 'caustic_int3e-2.npy'
+
+    def __init__(self, *args, caustic_source: str = None,
+                 caustic_scale: float = 1.0, **kwargs):
+        """
+        All positional and keyword arguments will be passed directly
+        to ``MovingMNIST`` except for the below listed parameters.
+        If ``transform`` and/or ``target_transform`` are in ``kwargs``, they
+        are removed from the argument list to ``MovingMNIST`` and passed on
+        to that of ``self``.
+
+        :param caustic_source: the caustic pattern source, should be the
+               basename of an ``npy`` file under
+               ``${PYTORCH_DATA_HOME}/MovingMNIST/causticrender/``;
+               default to ``self.DEFAULT_CAUSTIC_SOURCE``
+        :param caustic_scale: the scale factor of the caustic pattern
+        """
+        # load caustic data, its mean and its std
+        if not caustic_source:
+            caustic_source = self.DEFAULT_CAUSTIC_SOURCE
+        caustic_data, c_mean, c_std = self.load_caustic_data(caustic_source)
+        caustic_data = (caustic_data.astype(np.float64) * caustic_scale) \
+            .astype(np.uint8)
+        c_std *= caustic_scale ** 2
+        c_mean = (c_mean,)
+        c_std = (c_std,)
+
+        # load MNIST data, its mean and its std
+        transforms = {}
+        try:
+            transforms['transform'] = kwargs['transform']
+            kwargs['transform'] = np.asarray  # convert PIL image to array
+        except KeyError:
+            pass
+        try:
+            transforms['target_transform'] = kwargs['target_transform']
+            del kwargs['target_transform']
+        except KeyError:
+            pass
+        dsbackend = MovingMNIST(*args, **kwargs)
+        if len(dsbackend.params) != 1:
+            raise RuntimeError('Backend MovingMNIST should have only one '
+                               'params, but got {}'
+                               .format(len(dsbackend.params)))
+        m_normalize = dsbackend.default_normalize
+        m_mean, m_std = m_normalize.mean, m_normalize.std
+
+        # check compatibility between MovingMNIST and caustic data
+        for i, par in enumerate(dsbackend.params):
+            if par.shape != caustic_data.shape[1:]:
+                raise ValueError('caustic shape ({}) doesn\'t match '
+                                 'MovingMNIST sub-dataset {} shape ({})'
+                                 .format(caustic_data.shape[1:],
+                                         i, par.shape))
+            if caustic_data.shape[0] < par.seq_len:
+                raise ValueError('caustic period ({}) shorter than '
+                                 'MovingMNIST seq_len ({})'
+                                 .format(caustic_data.shape[0],
+                                         par.seq_len))
+
+        # load caustic data assignment
+        c_a = self.load_caustic_assignment(len(dsbackend),
+                                           caustic_data.shape[0],
+                                           dsbackend.params[0].seq_len)
+
+        self.dsbackend = dsbackend
+        self.caustic_data = caustic_data
+        self.caustic_assign = c_a
+        self.transform = transforms.get('transform', None)
+        self.target_transform = transforms.get('target_transform', None)
+
+        # compute final mean and std
+        mean = tuple((x + y) for x, y in zip(m_mean, c_mean))
+        std = tuple((x ** 2 + y ** 2) for x, y in zip(m_std, c_std))
+        self.__normalize = torchvision.transforms.Normalize((mean,), (std,))
+
+    @classmethod
+    def load_caustic_data(cls, name: str):
+        """
+        :param name: the file basename
+        :return: the caustic data, mean, and std
+        """
+        fromfile = os.path.join(cls.CAUSTIC_SOURCE_BASEDIR, name)
+        caustic_data = np.load(fromfile)
+
+        cfg = ConfigParser()
+        nmlstats = os.path.join(cls.CAUSTIC_SOURCE_BASEDIR, 'nml-stats.ini')
+        if not cfg.read(nmlstats):
+            raise FileNotFoundError('"{}" not found'.format(nmlstats))
+        sec_name = name
+        mean = cfg.getfloat(sec_name, 'mean')
+        std = cfg.getfloat(sec_name, 'std')
+        return caustic_data, mean, std
+
+    @classmethod
+    def load_caustic_assignment(cls, n_videos: int, n_caustic: int,
+                                seq_len: int) -> np.ndarray:
+        """
+        :param n_videos: number of videos to apply the patterns
+        :param n_caustic: number of caustic patterns in the file
+        :param seq_len: sequence length of the video to apply the patterns
+        :return: the assignment list
+        """
+        name = 'assign_T{}_L{}.npy'.format(seq_len, n_caustic)
+        a = np.load(os.path.join(cls.CAUSTIC_ASSIGNMENT_BASEDIR, name))
+        assert len(a.shape) == 1
+        if n_videos > a.shape[0]:
+            raise RuntimeError('{} assignments are not enough for {} '
+                               'videos'.format(a.shape[0], n_videos))
+        a = a[:n_videos]
+        return a
+
+    @property
+    def default_normalize(self) -> torchvision.transforms.Normalize:
+        return self.__normalize
+
+    def __len__(self):
+        return len(self.dsbackend)
+
+    def __getitem__(self, index):
+        if self.dsbackend.train:
+            img, label = self.dsbackend[index]
+            img = self.__apply_caustic(img, self.caustic_assign[index])
+            if self.transform:
+                img = self.transform(img)
+            if self.target_transform:
+                label = self.target_transform(label)
+            return img, label
+        img = self.dsbackend[index]
+        img = self.__apply_caustic(img, self.caustic_assign[index])
+        if self.transform:
+            img = self.transform(img)
+        return img
+
+    def __apply_caustic(self, img: np.ndarray, cindex: int):
+        img = img.astype(np.int64)
+        cindices = np.arange(cindex, cindex + img.shape[0])
+        cdata = self.caustic_data[cindices]
+        cdata = cdata.astype(np.int64)
+        img = np.clip(img + cdata, 0, 255).astype(np.uint8)
+        return img
