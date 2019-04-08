@@ -18,7 +18,7 @@ import numpy as np
 import h5py
 
 import utils
-import vmdata
+import vzdata
 
 T = typing.TypeVar('T')
 
@@ -443,7 +443,7 @@ class VdsetRoot:
             value = self.parser2(string)
         except ValueError:
             value = self.parser3(string)
-        return vmdata.dataset_root(*value)
+        return vzdata.dataset_root(*value)
 
 
 class IntRanges:
