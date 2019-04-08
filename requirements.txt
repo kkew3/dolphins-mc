@@ -1,29 +1,17 @@
-torch==1.0.0
-torchvision
-tqdm
-scikit-learn
-scikit-image
-pylatex
-numpy==1.14.5
-scipy
-opencv-python
-hickle
-matplotlib
-cachetools
-filelock
+-r requirements-basic.txt
 
 # IDE support
 pylint
-typing
 
 # for experiments
 blllib
+ifilters
 jupyter
 
 # for debugging
 unittest2
 ipdb
+pytest
 
 # for compatible with the original pytorch-faster-rcnn project
 cffi
-easydict==1.6

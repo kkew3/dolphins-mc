@@ -6,8 +6,10 @@ test-res/
 .data/
 .assets/
 .envrc
+.pylintrc
 .vscode/
 .idea/
+*.sublime-*
 
 build.xml
 .ant-targets-build.xml
