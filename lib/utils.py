@@ -2,6 +2,7 @@
 Global library for other dedicated library or project/branch-specific codes.
 """
 import itertools
+import collections
 import os
 import re
 import sys
@@ -12,7 +13,6 @@ import typing
 import numpy as np
 import cv2
 import torch
-
 
 T1 = typing.TypeVar('T1')
 T2 = typing.TypeVar('T2')
@@ -277,7 +277,8 @@ def jacobian(outputs: torch.Tensor, inputs: torch.Tensor,
     return gradmaps
 
 
-def ituple_k(x: typing.Union[int, typing.Sequence[int]], k=2) -> typing.Sequence[int]:
+def ituple_k(x: typing.Union[int, typing.Sequence[int]], k=2) -> \
+        typing.Sequence[int]:
     """
     Expand an integer to a k-tuple of that integer if it's not already a
     k-tuple. Note that the *integer* type is not enforced -- it only appears
@@ -308,13 +309,15 @@ def ituple_k(x: typing.Union[int, typing.Sequence[int]], k=2) -> typing.Sequence
 
 
 # noinspection PyTypeChecker
-def ituple_2(x: typing.Union[int, typing.Tuple[int, int]]) -> typing.Tuple[int, int]:
+def ituple_2(x: typing.Union[int, typing.Tuple[int, int]]) -> typing.Tuple[
+    int, int]:
     """Shortcut to ``ituple_k(*, k=2)``."""
     return ituple_k(x, k=2)
 
 
 # noinspection PyTypeChecker
-def ituple_3(x: typing.Union[int, typing.Tuple[int, int, int]]) -> typing.Tuple[int, int, int]:
+def ituple_3(x: typing.Union[int, typing.Tuple[int, int, int]]) -> \
+        typing.Tuple[int, int, int]:
     """Shortcut to ``ituple_k(*, k=3)``."""
     return ituple_k(x, k=3)
 
@@ -436,7 +439,8 @@ def new_int_filter(pat: str) -> typing.Callable[[int], bool]:
     raise ValueError('Illegal pattern `{}\''.format(pat))
 
 
-def new_ituple_filter(pat: str) -> typing.Callable[[typing.Sequence[int]], bool]:
+def new_ituple_filter(pat: str) -> typing.Callable[
+    [typing.Sequence[int]], bool]:
     """
     Adapting ``new_int_filter`` to multiple nonnegative integer scenario, such
     that the enumeration of integers must be enclosed by a pair of square
@@ -538,6 +542,10 @@ def suppress_numpy_warning(**kwargs):
         np.seterr(**old_errstate)
 
 
+class ShapeMismatchError(ValueError):
+    pass
+
+
 def check_shape(array, *ref_shapes: typing.Sequence[typing.Optional[int]]):
     """
     Check shape of ``array` against a number of expected shapes. Fail the test
@@ -549,7 +557,8 @@ def check_shape(array, *ref_shapes: typing.Sequence[typing.Optional[int]]):
            fails
     :param ref_shapes: referential shape, where ``None`` denotes any int
     :return: the index of the first matched ``ref_shapes``
-    :raise ValueError: if none matches
+    :raise ShapeMismatchError: if none matches; note that
+           ``ShapeMismatchError`` is a type of ``ValueError``
     """
     try:
         sh: typing.Sequence[int] = array.shape
@@ -559,5 +568,14 @@ def check_shape(array, *ref_shapes: typing.Sequence[typing.Optional[int]]):
         if len(sh) == len(ref) and all(x == y for x, y in zip(sh, ref)
                                        if y is not None):
             return i
-    raise ValueError('Unexpected shape {}; should be one of {}'
-                     .format(sh, list(ref_shapes)))
+    raise ShapeMismatchError('Unexpected shape {}; should be one of {}'
+                             .format(sh, list(ref_shapes)))
+
+
+ShapeHW = collections.namedtuple('ShapeHW', 'H W')
+ShapeCHW = collections.namedtuple('ShapeCHW', 'C H W')
+ShapeHWC = collections.namedtuple('ShapeHWC', 'H W C')
+ShapeBHWC = collections.namedtuple('ShapeBHWC', 'B H W C')
+ShapeBCHW = collections.namedtuple('ShapeBCHW', 'B C H W')
+ShapeBTCHW = collections.namedtuple('ShapeBTCHW', 'B T C H W')
+ShapeBHWD = collections.namedtuple('ShapeBHWD', 'B H W D')
