@@ -34,24 +34,29 @@ MNIST_IMG_SIZE: int = 28
 USE_MNIST_TRAIN: bool = True
 
 
-class MMnistParams(collections.namedtuple('MMnistParams', (
-        'shape', 'seq_len', 'seqs_per_class', 'nums_per_image',
-        'noise_std'))):
+class MMnistParams:
     """
-    Parameters:
-
-        shape ((int, int)): (height, width) of generated videos
-        seq_len (int): video length
-        seqs_per_class (int): number of videos for each combination of digits
-        nums_per_image (int): number of digits in each video
-        noise_std (float): zero-mean Gaussian noise std over the video
-
-    >>> par = MMnistParams((64, 64), 20, 100, 3, 0.015)
+    >>> par = MMnistParams((64, 64), 20, 100, 3, 0.015, [])
     >>> str(par)
-    'r64x64_T20_m100_n3_s1.50e-02'
-    >>> str(MMnistParams.parse('r64x64_T20_m100_n3_s1.50e-02'))
-    'r64x64_T20_m100_n3_s1.50e-02'
+    'r64x64_T20_m100_n3_s1.50e-02_b'
+    >>> par = MMnistParams((64, 64), 20, 100, 3, 0.015, [1, 0])
+    >>> str(par)
+    'r64x64_T20_m100_n3_s1.50e-02_b0,1'
+    >>> str(MMnistParams.parse('r64x64_T20_m100_n3_s1.50e-02_b'))
+    'r64x64_T20_m100_n3_s1.50e-02_b'
+    >>> str(MMnistParams.parse('r64x64_T20_m100_n3_s1.50e-02_b1'))
+    'r64x64_T20_m100_n3_s1.50e-02_b1'
     """
+    def __init__(self, shape: typing.Tuple[int, int], seq_len: int,
+                 seqs_per_class: int, nums_per_image: int,
+                 noise_std: float = 0.0,
+                 backgrounds: typing.Optional[typing.Sequence[int]] = None):
+        self.shape: typing.Tuple[int, int] = shape
+        self.seq_len: int = seq_len
+        self.seqs_per_class: int = seqs_per_class
+        self.nums_per_image: int = nums_per_image
+        self.noise_std: float = noise_std
+        self.backgrounds: typing.List[int] = sorted(backgrounds or [])
 
     @classmethod
     def parse(cls, string: str):
@@ -59,11 +64,12 @@ class MMnistParams(collections.namedtuple('MMnistParams', (
         Parse instance from string.
         """
         key2attr_ty = {
-            'r': ('shape', lambda x: tuple(map(int, x.split('x')))),
+            'r': ('shape', lambda x: tuple(map(int, filter(None, x.split('x'))))),
             'T': ('seq_len', int),
             'm': ('seqs_per_class', int),
             'n': ('nums_per_image', int),
             's': ('noise_std', float),
+            'b': ('backgrounds', lambda x: sorted(map(int, filter(None, x.split(','))))),
         }
         kwargs = {}
         for tok in string.split('_'):
@@ -73,14 +79,54 @@ class MMnistParams(collections.namedtuple('MMnistParams', (
         return cls(**kwargs)
 
     def __str__(self):
-        attr_tmpl = [
-            ('shape', 'r{{0.{0}[0]}}x{{0.{0}[1]}}'),
-            ('seq_len', 'T{{0.{0}}}'),
-            ('seqs_per_class', 'm{{0.{0}}}'),
-            ('nums_per_image', 'n{{0.{0}}}'),
-            ('noise_std', 's{{0.{0}:.2e}}'),
-        ]
-        return '_'.join(y.format(x) for x, y in attr_tmpl).format(self)
+        tmpl = '_'.join((
+            'r{shape[0]}x{shape[1]}',
+            'T{seq_len}',
+            'm{seqs_per_class}',
+            'n{nums_per_image}',
+            's{noise_std:.2e}',
+            'b{backgrounds}',
+        ))
+        kwargs = self.__dict__.copy()
+        kwargs['backgrounds'] = ','.join(map(str, kwargs['backgrounds']))
+        return tmpl.format(**kwargs)
+
+    def __repr__(self):
+        return ''.join((
+            self.__class__.__name__, '(',
+            'shape={}, '.format(self.shape),
+            'seq_len={}, '.format(self.seq_len),
+            'seqs_per_class={}, '.format(self.seqs_per_class),
+            'nums_per_image={}, '.format(self.nums_per_image),
+            'noise_std={:.2e}, '.format(self.noise_std),
+            'backgrounds={}'.format(self.backgrounds),
+            ')',
+        ))
+
+    def __iter__(self):
+        return iter([
+            self.shape,
+            self.seq_len,
+            self.seqs_per_class,
+            self.nums_per_image,
+            self.noise_std,
+            self.backgrounds,
+        ])
+
+    def __len__(self):
+        return 6
+
+    def __bool__(self):
+        return True
+
+    def __eq__(self, other):
+        try:
+            return tuple(self) == tuple(other)
+        except TypeError:
+            return NotImplemented
+
+    def __hash__(self):
+        return hash(tuple(self))
 
 
 def iter_(dataset):
@@ -247,7 +293,7 @@ def dump_dataset(dataset: GroupedMMnistDataset, root: str,
     try:
         _ = np.load(subroot)
     # pylint: disable=bare-except
-    except:
+    except Exception:
         _dataset = {comb2str(k): v for k, v in dataset.items()}
         np.savez_compressed(subroot, **_dataset)
     else:
@@ -313,7 +359,7 @@ class MovingMNIST(torch.utils.data.Dataset):
                     data = np.load(os.path.join(root, str(x) + '.npz'))
                     subs.append(data)
                     keys.append(tuple(sorted(data, key=str2comb)))
-                except BaseException as err:
+                except Exception as err:
                     if generate:
                         to_dump = generate_moving_mnist(x)
                         dump_dataset(to_dump, root, x)
