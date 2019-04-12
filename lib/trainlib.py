@@ -539,6 +539,11 @@ class BasicTrainer:
     +-----+--------------------+----------------------------------------------+
     | F   | after_batch_STAGE  | Launched after STAGE_once                    |
     +-----+--------------------+----------------------------------------------+
+    | F   | before_stage_STAGE | Launched before all batches of stage STAGE   |
+    |     |                    | while after ``net.train()`` or ``net.eval()``|
+    +-----+--------------------+----------------------------------------------+
+    | F   | after_stage_STAGE  | Launched after all batches of stage STAGE    |
+    +-----+--------------------+----------------------------------------------+
 
     where ``Man`` denotes "Mandatory".  Without implementing mandatory methods
     leads to ``NotImplementedError`` when called from ``run`` (the start entry
@@ -555,6 +560,10 @@ class BasicTrainer:
     | before_batch_STAGE | ``() -> None``                    |
     +--------------------+-----------------------------------+
     | after_batch_STAGE  | ``() -> None``                    |
+    +--------------------+-----------------------------------+
+    | before_stage_STAGE | ``() -> None``                    |
+    +--------------------+-----------------------------------+
+    | after_stage_STAGE  | ``() -> None``                    |
     +--------------------+-----------------------------------+
 
     Optional instance variables before ``run``
@@ -716,6 +725,14 @@ class BasicTrainer:
             self.__checkpointsavers['train'] = saver
         return saver
 
+    def __before_stage(self, stage):
+        with contextlib.suppress(AttributeError):
+            getattr(self, 'before_stage_{}'.format(stage))()
+
+    def __after_stage(self, stage):
+        with contextlib.suppress(AttributeError):
+            getattr(self, 'after_stage_{}'.format(stage))()
+
     def __before_batch(self, stage):
         """Call ``before_batch_STAGE``."""
         with contextlib.suppress(AttributeError):
@@ -764,7 +781,7 @@ class BasicTrainer:
             - loading the checkpoint (``prepare_net``)
             - freeze the network if necessary (``freeze_net``)
         """
-        # self.init_monitors()
+        self.init_monitors()
         self.prepare_net()
         # if self.freeze_net_when_necessary and 'train' not in self.run_stages:
         #     self._frozen_always = True
@@ -815,6 +832,7 @@ class BasicTrainer:
                         #         not self._frozen_always):
                         #     self.melt_net()
                         self.net.train()
+                        self.__before_stage(stage)
                         for batch, it in enumerate(self.__get_loader(stage)):
                             # `it` is `(inputs, targets)`, etc.
                             self.__before_batch(stage)
@@ -825,11 +843,13 @@ class BasicTrainer:
                             checkpointsaver = self.__get_checkpointsaver()
                             checkpointsaver((epoch, batch))
                             self.__after_batch(stage)
+                        self.__after_stage(stage)
                     else:
                         # if (self.freeze_net_when_necessary and
                         #         not self._frozen_always):
                         #     self.freeze_net()
                         self.net.eval()
+                        self.__before_stage(stage)
                         for batch, it in enumerate(self.__get_loader(stage)):
                             # `it` is `(inputs, targets), etc.`
                             self.__before_batch(stage)
@@ -838,6 +858,7 @@ class BasicTrainer:
                             self.__log_stats(epoch, stage, batch,
                                              logger, stats)
                             self.__after_batch(stage)
+                        self.__after_stage(stage)
                 self.after_epoch()
             logger.info('Returns successfully')
             self.teardown(None)
