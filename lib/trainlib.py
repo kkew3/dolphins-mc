@@ -593,14 +593,13 @@ class BasicTrainer:
 
     def __init__(self, net: nn.Module, max_epoch: int = 1,
                  device: str = 'cpu', progress: _EBProgress = None,
-                 configname: str = 'trainer.ini', basedir: str = None,
-                 freeze_net_when_necessary=False):
-        r"""
+                 configname: str = 'trainer.ini', basedir: str = None):
+        """
         :param net: the network to train
         :param max_epoch: maximum epoch to train, where an epoch is defined as
                a complete traversal of the underlying dataset
         :param device: where to train the network, choices:
-               { cpu, cuda(:\d+)? }
+               { cpu, cuda(:\\d+)? }
         :param progress: where to continue training, default to train from
                scratch. When ``progress`` is not ``None``, denote it as
                ``(E, B)``. The first checkpoint to be dumped by the trainer
@@ -611,14 +610,6 @@ class BasicTrainer:
                in the configuration. This attribute may or may not be
                specified here, but must be specified before the invocation of
                ``self.setup``
-        # :param freeze_net_when_necessary: if True, freeze the network
-        #        parameters whenever ``stage`` is not 'train', and
-        #        always freeze the network if there's no 'train' in
-        #        ``self.run_stages``. Do not specify as ``True`` if in non-train
-        #        stages the network weights are used for backpropagation. This
-        #        option can be useful if the inputs requires gradient
-        #        backpropagation, in which case ``torch.no_grad`` cannot be
-        #        used
         """
         self.device = device
         self.net = net
@@ -630,13 +621,9 @@ class BasicTrainer:
             self.basedir = basedir
         self.__statsavers: typing.Dict[str, StatSaver] = {}
         self.__checkpointsavers: typing.Dict[str, CheckpointSaver] = {}
-        # self.freeze_net_when_necessary = freeze_net_when_necessary
 
         self._trained_once = False
         """Used to mark the beginning of training"""
-        # self._origrg = {}
-        # """Used to freeze network when necessary"""
-        # self._frozen_always = False
 
     def _load_config(self, file_) -> BasicTrainerConfig:
         configdirs = [
@@ -696,12 +683,6 @@ class BasicTrainer:
             load_checkpoint(self.net, savedir, type(self).checkpoint_tmpl,
                             self.progress, map_location=self.device)
         self.net.to(self.device)
-
-    # def freeze_net(self):
-    #     self._origrg = freeze_model(self.net)
-    #
-    # def melt_net(self):
-    #     melt_model(self.net, self._origrg, empty_after_melting=True)
 
     def __get_statsaver(self, stage):
         """Deferred instantiation of ``StatSaver``'s."""
@@ -779,14 +760,9 @@ class BasicTrainer:
 
             - initializing checkpoing and statistics savers (``init_monitors``)
             - loading the checkpoint (``prepare_net``)
-            - freeze the network if necessary (``freeze_net``)
         """
         self.init_monitors()
         self.prepare_net()
-        # if self.freeze_net_when_necessary and 'train' not in self.run_stages:
-        #     self._frozen_always = True
-        # if self._frozen_always:
-        #     self.freeze_net()
 
     def teardown(self, error: typing.Optional[Exception]):
         """
@@ -828,9 +804,6 @@ class BasicTrainer:
                     logger.debug('Begin stage %s', stage)
                     if stage == 'train':
                         self._trained_once = True
-                        # if (self.freeze_net_when_necessary and
-                        #         not self._frozen_always):
-                        #     self.melt_net()
                         self.net.train()
                         self.__before_stage(stage)
                         for batch, it in enumerate(self.__get_loader(stage)):
@@ -845,9 +818,6 @@ class BasicTrainer:
                             self.__after_batch(stage)
                         self.__after_stage(stage)
                     else:
-                        # if (self.freeze_net_when_necessary and
-                        #         not self._frozen_always):
-                        #     self.freeze_net()
                         self.net.eval()
                         self.__before_stage(stage)
                         for batch, it in enumerate(self.__get_loader(stage)):
@@ -933,8 +903,80 @@ class BasicTrainer:
             logger.info('epoch%d/%s batch%d', epoch, stage, batch)
 
 
-# TODO: FreezingTrainer
 # TODO: BasicEvaluator
+
+class FreezingTrainer(BasicTrainer):
+    """
+    Abstract trainer class that freeze the network parameters (but not
+    disabling the gradients of the inputs) whenever ``stage`` is not "train".
+    For details, refer to ``help(BasicTrainer)``.
+    """
+
+    def __init__(self, net: nn.Module, max_epoch: int = 1,
+                 device: str = 'cpu', progress: _EBProgress = None,
+                 configname: str = 'trainer.ini', basedir: str = None,
+                 freeze_net_when_necessary=False):
+        """
+        :param net: the network to train
+        :param max_epoch: maximum epoch to train, where an epoch is defined as
+               a complete traversal of the underlying dataset
+        :param device: where to train the network, choices:
+               { cpu, cuda(:\\d+)? }
+        :param progress: where to continue training, default to train from
+               scratch. When ``progress`` is not ``None``, denote it as
+               ``(E, B)``. The first checkpoint to be dumped by the trainer
+               would be ``(E+1, 0)``, and will overwrite existing npy
+               statistics and pth checkpoint files.
+        :param configname: the ini file basename used to configure the trainer
+        :param basedir: the base directory of all ``statdir`` and ``savedir``
+               in the configuration. This attribute may or may not be
+               specified here, but must be specified before the invocation of
+               ``self.setup``
+        :param freeze_net_when_necessary: if True, freeze the network
+               parameters whenever ``stage`` is not 'train', and
+               always freeze the network if there's no 'train' in
+               ``self.run_stages``. Do not specify as ``True`` if in non-train
+               stages the network weights are used for backpropagation. This
+               option can be useful if the inputs requires gradient
+               backpropagation, in which case ``torch.no_grad`` cannot be
+               used
+        """
+        super().__init__(net, max_epoch=max_epoch, device=device,
+                         progress=progress, configname=configname,
+                         basedir=basedir)
+        self.freeze_net_when_necessary = freeze_net_when_necessary
+        self._origrg = {}
+        """Used to freeze network when necessary"""
+        self._frozen_always = False
+
+    def freeze_net(self) -> None:
+        self._origrg = freeze_model(self.net)
+
+    def melt_net(self) -> None:
+        melt_model(self.net, self._origrg, empty_after_melting=True)
+
+    def before_stage_train(self):
+        if self.freeze_net_when_necessary and not self._frozen_always:
+            self.melt_net()
+
+    def after_stage_train(self):
+        if self.freeze_net_when_necessary and not self._frozen_always:
+            self.freeze_net()
+
+    def setup(self):
+        """
+        Callback before ``run`` and after ``__init__``. Default to:
+
+            - initializing checkpoing and statistics savers (``init_monitors``)
+            - loading the checkpoint (``prepare_net``)
+            - freeze the network if necessary (``freeze_net``)
+        """
+        super().setup()
+        run_stages = self.cfg.attrs['run_stages']
+        if self.freeze_net_when_necessary and 'train' not in run_stages:
+            self._frozen_always = True
+        if self._frozen_always:
+            self.freeze_net()
 
 
 class BasicEvaluator(BasicTrainer):
