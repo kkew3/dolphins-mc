@@ -11,16 +11,21 @@ import math
 import collections
 import itertools
 import bisect
+import tempfile
+import multiprocessing
+import contextlib
+import shutil
 import typing
 from configparser import ConfigParser
 import logging
 
+import numpy as np
+import cv2
 import torch.utils.data
 import torchvision
-import numpy as np
 from PIL import Image
 
-from utils import loggername
+import utils
 
 __all__ = [
     'MMnistParams',
@@ -32,6 +37,8 @@ GroupedMMnistDataset = typing.Dict[typing.Tuple[int, ...], np.ndarray]
 
 MNIST_IMG_SIZE: int = 28
 USE_MNIST_TRAIN: bool = True
+
+MP_BATCH_SIZE = 100
 
 
 class MMnistParams:
@@ -47,6 +54,7 @@ class MMnistParams:
     >>> str(MMnistParams.parse('r64x64_T20_m100_n3_s1.50e-02_b1'))
     'r64x64_T20_m100_n3_s1.50e-02_b1'
     """
+
     def __init__(self, shape: typing.Tuple[int, int], seq_len: int,
                  seqs_per_class: int, nums_per_image: int,
                  noise_std: float = 0.0,
@@ -64,12 +72,14 @@ class MMnistParams:
         Parse instance from string.
         """
         key2attr_ty = {
-            'r': ('shape', lambda x: tuple(map(int, filter(None, x.split('x'))))),
+            'r': ('shape', lambda x: tuple(
+                map(int, filter(None, x.split('x'))))),
             'T': ('seq_len', int),
             'm': ('seqs_per_class', int),
             'n': ('nums_per_image', int),
             's': ('noise_std', float),
-            'b': ('backgrounds', lambda x: sorted(map(int, filter(None, x.split(','))))),
+            'b': ('backgrounds', lambda x: sorted(
+                map(int, filter(None, x.split(','))))),
         }
         kwargs = {}
         for tok in string.split('_'):
@@ -136,7 +146,7 @@ def iter_(dataset):
 
 
 def _l(*args) -> logging.Logger:
-    return logging.getLogger(loggername(__name__, *args))
+    return logging.getLogger(utils.loggername(__name__, *args))
 
 
 def load_dataset() -> LabelImgsDict:
@@ -162,12 +172,12 @@ def arr_from_img(im: Image.Image, shift: float = 0) -> np.ndarray:
 
     :param im: uint8 image
     :param shift:
-    :return: image array of shape (C, W, H)
+    :return: image array of shape (C, H, W)
     """
     arr = np.asarray(im).astype(np.float32) / 255
     if len(arr.shape) == 2:
-        arr = arr[..., np.newaxis]
-    arr = arr.transpose(2, 1, 0) - shift
+        arr = arr[np.newaxis]
+    arr -= shift
     return arr
 
 
@@ -187,78 +197,128 @@ def get_random_images(mnist_dict: LabelImgsDict,
     return images
 
 
-# pylint: disable=too-many-locals,too-many-nested-blocks
-def generate_moving_mnist(params: MMnistParams) -> GroupedMMnistDataset:
+def load_background_images(bgindices) -> typing.Dict[str, np.ndarray]:
     """
-    Returns the Moving MNIST dataset to dump. The numpy array under each key
-    is of shape (N, T, H, W).
+    Load background images as per "$PYTORCH_DATA_HOME/MovingMNIST/background/
+    backgrounds.csv". The CSV file should have four columns: INDEX, NPZ, NAME
+    and DESCRIPTION. The data type of INDEX is expected to be ``int``.
+
+    :param bgindices: the values from the INDEX field in CSV
+    :return: the background images of the original sizes; the traversal order
+             of the returned dict is the same as that of ``bgindices``
+    :raise KeyError: if one of ``bgindices`` is not found in the first column
+           of the CSV file
     """
-    logger = _l('generate_moving_mnist')
-    mnist_dict = load_dataset()
-    combs = itertools.combinations(mnist_dict, params.nums_per_image)
-    combs = list(map(tuple, map(sorted, combs)))
+    bgbasedir = os.path.join(
+        os.path.normpath(os.environ['PYTORCH_DATA_HOME']),
+        MovingMNIST.__name__,
+        'background',
+    )
+    _bgindices = set(bgindices)
+    loaded_imgs = collections.OrderedDict([(k, None) for k in bgindices])
+    with open(os.path.join(bgbasedir, 'backgrounds.csv')) as infile:
+        for i, line in enumerate(infile):
+            if None not in loaded_imgs.values():
+                break
+            if i > 0:  # skip the header row
+                idx, npz, name, _ = line.rstrip('\n').split(',')
+                idx = int(idx)
+                if idx in _bgindices:
+                    with np.load(os.path.join(bgbasedir, npz + '.npz')) as d:
+                        loaded_imgs[idx] = d[name]
+    for i, img in loaded_imgs.items():
+        if img is None:
+            raise KeyError('INDEX "{}" not found in backgrounds.csv'
+                           .format(i))
+    return loaded_imgs
+
+
+def _generate_one_video(params: MMnistParams,
+                        bgimgs: typing.Dict[str, np.ndarray],
+                        mnist_dict: LabelImgsDict,
+                        cb: typing.Tuple[int, ...]) \
+        -> typing.List[np.ndarray]:
+    """
+    Generate one video as per dataset parameters ``params``.
+    :param params: the dataset parameters
+    :param bgimgs: background images to select from
+    :param mnist_dict: dictionary of MNIST label to images of that label
+    :param cb: current combination of digits
+    :return: a video
+    """
+    # to maintain randomness even in multiprocessing setting
+    np.random.seed()
+
+    mnist_images = get_random_images(mnist_dict, cb)
 
     h, w = params.shape
-    lims = h - MNIST_IMG_SIZE, w - MNIST_IMG_SIZE
+    lims = w - MNIST_IMG_SIZE, h - MNIST_IMG_SIZE
 
-    logger.info('Generating MovingMNIST')
-    mmnist: GroupedMMnistDataset = {}
-    for cid, cb in enumerate(combs):
-        mmnist[cb] = []
-        for k in range(params.seqs_per_class):
-            # randomly generate direction/speed/position,
-            # calculate velocity vector
-            direcs = np.pi * (np.random.rand(params.nums_per_image) * 2 - 1)
-            speeds = np.random.randint(5, size=params.nums_per_image) + 2
-            velocs = [(v * math.cos(d), v * math.sin(d))
-                      for d, v in zip(direcs, speeds)]
-            posits = [(np.random.rand() * lims[0], np.random.rand() * lims[1])
-                      for _ in range(params.nums_per_image)]
-            mnist_images = get_random_images(mnist_dict, cb)
+    # randomly generate direction/speed/position,
+    # calculate velocity vector
+    direcs = np.pi * (np.random.rand(params.nums_per_image) * 2 - 1)
+    speeds = np.random.randint(5, size=params.nums_per_image) + 2
+    velocs = [(v * math.cos(d), v * math.sin(d))
+              for d, v in zip(direcs, speeds)]
+    posits = [(np.random.rand() * lims[0], np.random.rand() * lims[1])
+              for _ in range(params.nums_per_image)]
 
-            video = []
-            for _fid in range(params.seq_len):
-                canvas = np.zeros((1, w, h), dtype=np.float32)
-                for i in range(params.nums_per_image):
-                    _c = Image.new('L', (w, h))
-                    _c.paste(Image.fromarray(mnist_images[i]),
-                             tuple(map(int, map(round, posits[i]))))
-                    canvas += arr_from_img(_c)
-                # update positions based on velocity and see which digits
-                # go beyond the walls
-                _next_posits = [tuple(map(sum, zip(*pv)))
-                                for pv in zip(posits, velocs)]
-                # bounce off wall if we hit one
-                for i, pos in enumerate(_next_posits):
-                    for j, coord in enumerate(pos):
-                        if coord < -2 or coord > lims[j] + 2:
-                            velocs[i] = tuple(itertools.chain(
-                                list(velocs[i][:j]),
-                                [-1 * velocs[i][j]],
-                                velocs[i][j + 1:],
-                            ))
+    video = []
+    for _fid in range(params.seq_len):
+        if params.backgrounds:
+            bgindex = np.random.choice(params.backgrounds)
+            bg = bgimgs[bgindex]
+            assert len(bg.shape) == 2, str(bg.shape)
+            bg = cv2.resize(bg, (w, h))[np.newaxis]
+            canvas = bg.astype(np.float32) / 255
+        else:
+            canvas = np.zeros((1, h, w), dtype=np.float32)
 
-                # update positions with bouncing for sure
-                posits = [tuple(map(sum, zip(*pv)))
-                          for pv in zip(posits, velocs)]
+        for i in range(params.nums_per_image):
+            _c = Image.new('L', (w, h))
+            _c.paste(Image.fromarray(mnist_images[i]),
+                     tuple(map(int, map(round, posits[i]))))
+            _c = arr_from_img(_c)  # shape: (1, h, w)
+            # Now the order of painting the digits matters, provided
+            # that the digits have different colors
+            _m = (_c > 0.0)
+            canvas[_m] = 0.0
+            canvas += _c
+        # update positions based on velocity and see which digits
+        # go beyond the walls
+        _next_posits = [tuple(map(sum, zip(*pv)))
+                        for pv in zip(posits, velocs)]
+        # bounce off wall if we hit one
+        for i, pos in enumerate(_next_posits):
+            for j, coord in enumerate(pos):
+                if coord < -2 or coord > lims[j] + 2:
+                    velocs[i] = tuple(itertools.chain(
+                        list(velocs[i][:j]),
+                        [-1 * velocs[i][j]],
+                        velocs[i][j + 1:],
+                    ))
 
-                canvas += np.random.randn(*canvas.shape) * params.noise_std
-                image = (canvas * 255) \
-                    .clip(0, 255) \
-                    .astype(np.uint8) \
-                    .transpose(2, 1, 0)
-                assert image.shape[-1] == 1, str(image.shape)
-                image = image[..., 0]
+        # update positions with bouncing for sure
+        posits = [tuple(map(sum, zip(*pv)))
+                  for pv in zip(posits, velocs)]
 
-                video.append(image)
-            mmnist[cb].append(video)
-            logger.debug('Generated 1 video for {}; {}/{} completed'
-                         .format(cb, k + 1, params.seqs_per_class))
-        mmnist[cb] = np.array(mmnist[cb])
-        logger.info('Generated {} videos for {}; {}/{} completed'
-                    .format(mmnist[cb].shape[0], cb, cid + 1, len(combs)))
-    logger.info('Completed generating MovingMNIST')
-    return mmnist
+        canvas += np.random.randn(*canvas.shape) * params.noise_std
+        image = (canvas * 255) \
+            .clip(0, 255) \
+            .astype(np.uint8) \
+            .transpose(1, 2, 0)
+        assert image.shape[-1] == 1, str(image.shape)
+        image = image[..., 0]  # remove the color channel
+        video.append(image)
+    return video
+
+
+class _GenerateOneVideoWrapper:
+    def __init__(self, *args):
+        self.args = args
+
+    def __call__(self, _):
+        return _generate_one_video(*self.args)
 
 
 def comb2str(comb_list: typing.Sequence[int]):
@@ -278,27 +338,64 @@ def str2comb(string: str) -> typing.Tuple[int, ...]:
     return tuple(map(int, string.split(',')))
 
 
-def dump_dataset(dataset: GroupedMMnistDataset, root: str,
+def generate_moving_mnist(params: MMnistParams) -> tempfile.TemporaryFile:
+    """
+    Returns the Moving MNIST dataset to dump. The numpy array under each key
+    is of shape (N, T, H, W).
+    """
+    logger = _l(generate_moving_mnist.__name__)
+    mnist_dict = load_dataset()
+    combs = itertools.combinations(mnist_dict, params.nums_per_image)
+    combs = list(map(tuple, map(sorted, combs)))
+
+    # load background images if any
+    bgimgs = load_background_images(params.backgrounds)
+
+    # save the generated videos to a temporary file to save memory
+    cbuf = tempfile.TemporaryFile()
+
+    logger.info('Generating MovingMNIST')
+    with contextlib.closing(utils.IncrementalNpzWriter(cbuf, mode='w')) as out:
+        with multiprocessing.Pool(4) as pool:
+            for cid, cb in enumerate(combs):
+                mnist_cb = pool.map(
+                    _GenerateOneVideoWrapper(params, bgimgs, mnist_dict, cb),
+                    range(params.seqs_per_class), MP_BATCH_SIZE)
+                mnist_cb = np.array(mnist_cb)
+                logger.info('Generated %d videos for %s; %d/%d completed',
+                            mnist_cb.shape[0], str(cb), cid + 1, len(combs))
+                # pylint: disable=no-member
+                out.write(comb2str(cb), mnist_cb)
+                logger.debug('Dumped %d videos for %s to temp file',
+                             mnist_cb.shape[0], str(cb))
+    logger.info('Completed generating MovingMNIST')
+    cbuf.seek(0)
+    return cbuf
+
+
+def dump_dataset(dataset_tmp: tempfile.TemporaryFile, root: str,
                  params: MMnistParams) -> None:
     """
     Dump dataset in binary format.
-    :param dataset: the generated dataset
+
+    :param dataset_tmp: the generated dataset in tmp file
     :param root: an existing directory to store ``dataset``
     :param params: dataset parameters
     :raise FileNotFoundError: if ``root`` not exists
     """
-    logger = _l('dump_dataset')
-    root = os.path.normpath(root)
-    subroot = os.path.join(root, str(params) + '.npz')
-    try:
-        _ = np.load(subroot)
-    # pylint: disable=bare-except
-    except Exception:
-        _dataset = {comb2str(k): v for k, v in dataset.items()}
-        np.savez_compressed(subroot, **_dataset)
-    else:
-        logger.warning('Sub-dataset {} already exists; aborted'
-                       .format(subroot))
+    with contextlib.closing(dataset_tmp):
+        logger = _l(dump_dataset.__name__)
+        root = os.path.normpath(root)
+        subroot = os.path.join(root, str(params) + '.npz')
+        try:
+            _ = np.load(subroot)
+        # pylint: disable=bare-except
+        except FileNotFoundError:
+            with open(subroot, 'wb') as outfile:
+                shutil.copyfileobj(dataset_tmp, outfile)
+        else:
+            logger.warning('Sub-dataset {} already exists; aborted'
+                           .format(subroot))
 
 
 # pylint: disable=too-many-instance-attributes
@@ -361,7 +458,11 @@ class MovingMNIST(torch.utils.data.Dataset):
                     keys.append(tuple(sorted(data, key=str2comb)))
                 except Exception as err:
                     if generate:
-                        to_dump = generate_moving_mnist(x)
+                        try:
+                            to_dump = generate_moving_mnist(x)
+                        except KeyError as err:
+                            logger.error('KeyError: {}'.format(err))
+                            raise
                         dump_dataset(to_dump, root, x)
                         data = np.load(os.path.join(root, str(x) + '.npz'))
                         subs.append(data)
@@ -600,3 +701,100 @@ class CausticMovingMNIST(torch.utils.data.Dataset):
         cdata = cdata.astype(np.int64)
         img = np.clip(img + cdata, 0, 255).astype(np.uint8)
         return img
+
+
+
+
+
+def compute_mean_std(filename):
+    N_SAMPLE_PER_FILE = 100000
+    MIN_N_SAMPLE_PER_KEY = 100
+    MAX_MEMORY_BYTES = 4 * 1024 ** 3
+    MINSIZE_TO_USE_MMAP = 1024 ** 3
+
+    def sample_img(data, n: int, n_total_keys: int) -> np.ndarray:
+        N, T, H, W = data.shape
+        n_samples = min(1 + int(MAX_MEMORY_BYTES /
+                                (n_total_keys * H * W * 8)), n)
+        if n_samples < n:
+            logging.warning('reduced n_samples from %d to %d '
+                            'due to memory limit',
+                            n, n_samples)
+        ind = np.random.permutation(N * T)[:n_samples]
+        data = np.copy(data.reshape((N * T, H * W))[ind])
+        return data.astype(np.float64) / 255
+
+    def _calc():
+        alld = []
+        with np.load(filename) as zdata:
+            n_keys = len(list(zdata))
+        n_samples_per_key = int(N_SAMPLE_PER_FILE / n_keys) + 1
+        if n_samples_per_key < MIN_N_SAMPLE_PER_KEY:
+            logging.warning('n_samples_per_key=%d < MIN_N_SAMPLE_PER_KEY',
+                            n_samples_per_key)
+
+        # data shape for each npy: (N, T, H, W)
+
+        with np.load(filename) as zdata:
+            npykeys = list(zdata)
+
+        n_bytes = os.path.getsize(filename)
+        if n_bytes > self.MINSIZE_TO_USE_MMAP:
+            logging.info('switched to mmap mode for file "%s" (%d B)',
+                         filename, n_bytes)
+            with utils.NpzMMap(filename) as zdata:
+                for key in npykeys:
+                    with zdata.mmap(key) as d:
+                        alld.append(sample_img(d, n_samples_per_key, len(npykeys)))
+                        logging.debug('collected %d samples from key=%s',
+                                      alld[-1].shape[0], key)
+        else:
+            logging.info('switched to normal mode for file "%s" (%d B)',
+                         filename, n_bytes)
+            with np.load(filename) as zdata:
+                for key in npykeys:
+                    d = zdata[key]
+                    alld.append(sample_img(d, n_samples_per_key, len(npykeys)))
+                    logging.debug('collected %d samples from key=%s',
+                                  alld[-1].shape[0], key)
+        alld = np.concatenate(alld, axis=0)
+        logging.info('collected %d samples from "%s"', alld.shape[0], filename)
+        alld = alld.reshape(-1)
+        mean, std = np.mean(alld), np.std(alld)
+        logging.info('%s, mean=%s, std=%s', filename, mean, std)
+        return mean, std
+
+    def
+
+cfg_bak = configparser.ConfigParser()
+if not cfg_bak.read(INI_TOFILE):
+    cfg_bak = None
+
+try:
+    cfg = configparser.ConfigParser()
+    cfg.read(INI_TOFILE)
+    logging.info('N_SAMPLE_PER_FILE={}, MIN_N_SAMPLE_PER_KEY={}'
+                 .format(N_SAMPLE_PER_FILE, MIN_N_SAMPLE_PER_KEY))
+    for filename in args.filenames:
+        filename = os.path.normpath(filename)
+        secname = os.path.splitext(os.path.basename(filename))[0]
+        try:
+            cfg.add_section(secname)
+        except configparser.DuplicateSectionError:
+            logging.info('Skipped "%s" due to duplicate section in "%s"',
+                         filename, INI_TOFILE)
+        else:
+            m, s = calc(filename)
+            cfg[secname]['mean'] = str(m)
+            cfg[secname]['std'] = str(s)
+            logging.debug('cfg-obj written for %s', filename)
+    try:
+        with open(INI_TOFILE, 'w') as outfile:
+            cfg.write(outfile, space_around_delimiters=False)
+    except IOError:
+        logging.error('Failed to write back to "%s"', INI_TOFILE)
+except KeyboardInterrupt:
+    if cfg_bak:
+        logging.info('Reversing back the modification to "%s"', INI_TOFILE)
+        with open(INI_TOFILE, 'w') as outfile:
+            cfg_bak.write(outfile, space_around_delimiters=False)
