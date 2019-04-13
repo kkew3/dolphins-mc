@@ -658,6 +658,7 @@ class BasicTrainer:
         self.configname = os.path.normpath(configname)
         ini = self.__collect_config()
         self.cfg = self.parse_config(ini)
+        self.__log_parsed_config(self.cfg)
         with contextlib.suppress(ValueError):
             self.basedir = basedir
         self.__statsavers: typing.Dict[str, StatSaver] = {}
@@ -691,6 +692,24 @@ class BasicTrainer:
             raise RuntimeError('No configuration specified for {}'
                                .format(type(self).__name__))
         return cfg
+
+    def __log_parsed_config(self, parsed_cfg: TrainerConfig) -> None:
+        """
+        This auxiliary method should be called after ``parse_config`` has
+        returned.
+        """
+        tmpl_comps = []
+        args = []
+        for key, value in parsed_cfg.attrs.items():
+            tmpl_comps.append('__root__/%s=%r')
+            args.extend((key, value))
+        for stage, _d in parsed_cfg.stage_attrs.items():
+            for key, value in _d.items():
+                tmpl_comps.append('%s/%s=%r')
+                args.extend((stage, key, value))
+        tmpl = ''.join(('Parsed trainer config: ', ', '.join(tmpl_comps)))
+        logger = _l(self.__class__.__name__, self.__init__.__name__)
+        logger.info(tmpl, *args)
 
     def parse_config(self, ini: configparser.ConfigParser) -> TrainerConfig:
         return TrainerConfig(ini)
