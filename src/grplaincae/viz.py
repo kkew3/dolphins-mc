@@ -12,7 +12,7 @@ from more_trans import rearrange_temporal_batch, DeNormalize, \
     clamp_tensor_to_image
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from utils import loggername
+from loglib import loggername
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt

@@ -17,6 +17,7 @@ import typing
 import numpy as np
 import h5py
 
+import loglib
 import utils
 import vzdata
 
@@ -24,7 +25,7 @@ T = typing.TypeVar('T')
 
 
 def _l(*args):
-    return logging.getLogger(utils.loggername(__name__, *args))
+    return logging.getLogger(loglib.loggername(__name__, *args))
 
 
 class ExperimentLauncher:

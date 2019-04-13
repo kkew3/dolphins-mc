@@ -96,7 +96,14 @@ LOGGER_PARAM_NAME = '__logger__'
 def loggername(module_name: str, self_or_function_name: typing.Any,
                method_name: typing.Optional[str] = None) -> str:
     """
-    Returns logger name.
+    Returns logger name. Usage::
+
+        .. code-block::
+
+            loggername(__name__)
+            loggername(__name__, self)
+            loggername(__name__, 'function_name')
+            loggername(__name__, self, 'method_name')
 
     :param module_name: as returned by ``__name__``
     :param self_or_function_name: either the function name (str) or the

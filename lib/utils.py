@@ -19,6 +19,8 @@ import numpy as np
 import cv2
 import torch
 
+from loglib import loggername
+
 T1 = typing.TypeVar('T1')
 T2 = typing.TypeVar('T2')
 
@@ -222,33 +224,6 @@ def broadcast_value2list(value: T1, iterable: typing.Iterable[T2]) \
     """
     return map(lambda x: (value, x), iterable)
 
-
-def loggername(module_name: str, self_or_function_name: typing.Any,
-               method_name: typing.Optional[str] = None) -> str:
-    """
-    Returns logger name. Usage::
-
-        .. code-block::
-
-            loggername(__name__)
-            loggername(__name__, self)
-            loggername(__name__, 'function_name')
-            loggername(__name__, self, 'method_name')
-
-    :param module_name: as returned by ``__name__``
-    :param self_or_function_name: either the function name (str) or the
-           ``self`` object of the method to log
-    :param method_name: if not ``None``, the name of the method to log
-    :return: the logger **name**
-    """
-    tokens = [module_name]
-    if isinstance(self_or_function_name, str):
-        tokens.append(self_or_function_name)
-    else:
-        tokens.append(type(self_or_function_name).__name__)
-    if method_name:
-        tokens.append(method_name)
-    return '.'.join(tokens)
 
 def jacobian(outputs: torch.Tensor, inputs: torch.Tensor,
              to_device: str = None) -> torch.Tensor:

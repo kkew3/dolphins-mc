@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
+import loglib
 import utils
 import vmdata
 import more_sampler
@@ -15,7 +16,7 @@ from grplaincae.basicmodels import Autoencoder
 from trainlib import BasicTrainer
 
 def _l(*args):
-    return logging.getLogger(utils.loggername(__name__, *args))
+    return logging.getLogger(loglib.loggername(__name__, *args))
 
 
 class TrainOnlyAdamTrainer(BasicTrainer):

@@ -66,7 +66,7 @@ from filelock import FileLock
 from torch.utils.data import Dataset
 
 import utils
-from utils import loggername as _l
+from loglib import loggername as _l
 
 _cd = os.path.dirname(os.path.realpath(__file__))
 

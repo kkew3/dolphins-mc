@@ -16,7 +16,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from utils import loggername
+from loglib import loggername
 
 
 def _l(*args):

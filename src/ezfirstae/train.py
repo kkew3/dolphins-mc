@@ -8,7 +8,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import torchvision.transforms as trans
 
-from utils import loggername as _l
+from loglib import loggername as _l
 import more_sampler
 import more_trans
 import vmdata
