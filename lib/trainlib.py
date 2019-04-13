@@ -187,7 +187,7 @@ class StatSaver:
         return None
 
 
-class FieldChangedError(BaseException):
+class FieldChangedError(Exception):
     def __init__(self, original: typing.Sequence[str],
                  now: typing.Sequence[str]):
         super().__init__('Fields changed from {} to {}'
@@ -319,11 +319,22 @@ def melt_model(model: nn.Module, origrg: typing.Dict[str, bool],
         origrg.clear()
 
 
-class BasicTrainerConfig:
+class TrainerConfig:
     """
     Attributes:
 
-        *attrs*:
+    +-----------------+-----------------------------------------------------+
+    |    Attribute    |                     Description                     |
+    +=================+=====================================================+
+    | ``attrs``       | The key-value pairs under ``$ROOT_SECTION``.        |
+    |                 | These key-value pairs means to be global or default |
+    |                 | attributes.                                         |
+    +-----------------+-----------------------------------------------------+
+    | ``stage_attrs`` | The key-value pairs under section named from the    |
+    |                 | name of each stage. These are stage-specific        |
+    |                 | settings and override the default values from       |
+    |                 | ``attrs``.                                          |
+    +-----------------+-----------------------------------------------------+
     """
     ROOT_SECTION = '__root__'
     REGISTERED_FIRED_FUNCTIONS = {
@@ -408,10 +419,11 @@ class BasicTrainerConfig:
         If empty, returns ``None``.
         """
         _fired_and_args = fired.lstrip().split(',')
-        if not _fired_and_args:
+        if len(_fired_and_args) == 1 and not _fired_and_args[0].strip():
+            # this means that the key is specified as empty or white characters
             return None
 
-        _fired = _fired_and_args[0]
+        _fired = _fired_and_args[0].strip()
         _fired_args = _fired_and_args[1:]
         try:
             ffired = cls.REGISTERED_FIRED_FUNCTIONS[_fired]
@@ -443,14 +455,24 @@ class BasicTrainer:
         - evaluation after training
 
     The ``BasicTrainer`` is executed for ``max_epoch`` epochs.  For each
-    epoch, it runs ``len(run_stages)`` stages of loops.  Pseudocode
-    illustrating how it runs in general::
+    epoch, it runs ``len(run_stages)`` stages of loops.  Dynamic hook methods
+    are inserted to ensure flexibility. Pseudocode illustrating how it runs
+    in general::
 
         .. code-block::
 
+            # global-enter-hook
             for epoch in range(max_epoch):
+                # epoch-enter-hook
                 for stage in run_stages:
-                    ...
+                    # stage-enter-hook
+                    for batch in dataloader(stage):
+                        # batch-enter-hook
+                        ...
+                        # batch-exit-hook
+                    # stage-exit-hook
+                # epoch-exit-hook
+            # global-exit-hook
 
     ``ini`` configuration file
     ++++++++++++++++++++++++++
@@ -491,7 +513,7 @@ class BasicTrainer:
     |              |                |   name (or the full-qualified firing    |
     |              |                |   policy function name if the name is   |
     |              |                |   not registered at                     |
-    |              |                |   ``trainlib.BasicTrainerConfig``) and  |
+    |              |                |   ``trainlib.TrainerConfig``) and       |
     |              |                |   its arguments if any.                 |
     |              |                | - Default to "always firing"            |
     +--------------+----------------+-----------------------------------------+
@@ -540,7 +562,8 @@ class BasicTrainer:
     | F   | after_batch_STAGE  | Launched after STAGE_once                    |
     +-----+--------------------+----------------------------------------------+
     | F   | before_stage_STAGE | Launched before all batches of stage STAGE   |
-    |     |                    | while after ``net.train()`` or ``net.eval()``|
+    |     |                    | while after ``net.train()`` or               |
+    |     |                    | ``net.eval()``                               |
     +-----+--------------------+----------------------------------------------+
     | F   | after_stage_STAGE  | Launched after all batches of stage STAGE    |
     +-----+--------------------+----------------------------------------------+
@@ -569,9 +592,24 @@ class BasicTrainer:
     Optional instance variables before ``run``
     ++++++++++++++++++++++++++++++++++++++++++
 
+    These instance variables can be specified at compile time or at runtime
+    before ``run`` is called:
+
         - ``basedir``: the base directory of ``savedir`` and all ``statdir``
           specified in the ``.ini`` file.
 
+    Optional class variables
+    ++++++++++++++++++++++++
+
+    These class variables can be specified at compile time:
+
+        - ``DEFAULT_CONFIGNAME``: the basename of the default configuration of
+          the ``Trainer`` class lying under the same directory with the class
+          definition file
+        - ``__FILE__``: assign this variable ``__file__`` so that
+          ``DEFAULT_CONFIGNAME`` will be searched for under the dirname of
+          ``__FILE__``; ``AttributeError`` will be raised if ``__FILE__`` is
+          not specified when ``DEFAULT_CONFIGNAME`` is
     """
 
     timestamp_format = '%Y%m%d%H%M'  # e.g. 201811051438
@@ -605,18 +643,21 @@ class BasicTrainer:
                ``(E, B)``. The first checkpoint to be dumped by the trainer
                would be ``(E+1, 0)``, and will overwrite existing npy
                statistics and pth checkpoint files.
-        :param configname: the ini file basename used to configure the trainer
+        :param configname: the ini filename used to configure the trainer.
+               ``configname`` will override ``self.DEFAULT_CONFIGNAME`` if it
+               exists. If none exists, raises ``FileNotFoundError``
         :param basedir: the base directory of all ``statdir`` and ``savedir``
                in the configuration. This attribute may or may not be
                specified here, but must be specified before the invocation of
-               ``self.setup``
+               ``self.run``
         """
         self.device = device
         self.net = net
         self.max_epoch = max_epoch
         self.progress = progress
-        self.configname = configname
-        self.cfg = self.load_config()
+        self.configname = os.path.normpath(configname)
+        ini = self.__collect_config()
+        self.cfg = self.parse_config(ini)
         with contextlib.suppress(ValueError):
             self.basedir = basedir
         self.__statsavers: typing.Dict[str, StatSaver] = {}
@@ -625,22 +666,34 @@ class BasicTrainer:
         self._trained_once = False
         """Used to mark the beginning of training"""
 
-    def _load_config(self, file_) -> BasicTrainerConfig:
-        configdirs = [
-            os.path.realpath(os.getcwd()),
-            os.path.dirname(os.path.realpath(file_)),
-        ]
-        if configdirs[1] == configdirs[0]:
-            del configdirs[1]
-        configfiles = [os.path.join(d, self.configname) for d in configdirs]
+    def __collect_config(self) -> configparser.ConfigParser:
+        configfiles = []
+        if self.configname is not None:
+            configfiles.append(self.configname)
+        try:
+            default_configname = getattr(type(self), 'DEFAULT_CONFIGNAME')
+        except AttributeError:
+            pass
+        else:
+            default_configfile = os.path.join(
+                os.path.dirname(os.path.realpath(
+                    getattr(type(self), '__FILE__'))),
+                default_configname)
+            if configfiles and not os.path.samefile(configfiles[0],
+                                                    default_configfile):
+                configfiles.append(default_configfile)
+
         cfg = configparser.ConfigParser()
-        if not cfg.read(configfiles):
-            raise FileNotFoundError(configfiles[0])
-        cfg = BasicTrainerConfig(cfg)
+        if configfiles:
+            if not cfg.read(configfiles):
+                raise FileNotFoundError(configfiles[0])
+        else:
+            raise RuntimeError('No configuration specified for {}'
+                               .format(type(self).__name__))
         return cfg
 
-    def load_config(self) -> BasicTrainerConfig:
-        raise NotImplementedError('Expected to call _load_config(__file__)')
+    def parse_config(self, ini: configparser.ConfigParser) -> TrainerConfig:
+        return TrainerConfig(ini)
 
     @property
     def basedir(self):
@@ -657,8 +710,7 @@ class BasicTrainer:
             raise ValueError('basedir must not be empty')
         self._basedir = os.path.normpath(value)
 
-
-    def init_monitors(self):
+    def init_dirs(self):
         """
         Initialize the directory settings according to the configuration
         file and all previous manual attribute settings. This function is
@@ -678,7 +730,7 @@ class BasicTrainer:
 
         :param ext_savedir: external savedir; if not set, use ``self.savedir``
         """
-        savedir = ext_savedir or getattr(self, 'savedir')
+        savedir = ext_savedir or self.cfg.attrs['savedir']
         if self.progress is not None:
             load_checkpoint(self.net, savedir, type(self).checkpoint_tmpl,
                             self.progress, map_location=self.device)
@@ -686,23 +738,31 @@ class BasicTrainer:
 
     def __get_statsaver(self, stage):
         """Deferred instantiation of ``StatSaver``'s."""
+        tmpl = type(self).statname_tmpl
         try:
             saver = self.__statsavers[stage]
         except KeyError:
-            saver = StatSaver(self.cfg.stage_attrs['statdir'],
-                              statname_tmpl=type(self).statname_tmpl,
-                              fired=self.cfg.stage_attrs['fired_stat'])
+            fired_stat = self.cfg.stage_attrs['fired_stat']
+            if fired_stat is None:
+                saver = None
+            else:
+                saver = StatSaver(self.cfg.stage_attrs['statdir'],
+                                  statname_tmpl=tmpl, fired=fired_stat)
             self.__statsavers[stage] = saver
         return saver
 
     def __get_checkpointsaver(self):
         """Deferred instantiation of the ``CheckpointSaver``."""
+        tmpl = type(self).checkpoint_tmpl
         try:
             saver = self.__checkpointsavers['train']
         except KeyError:
-            saver = CheckpointSaver(self.net, self.cfg.attrs['savedir'],
-                                    checkpoint_tmpl=type(self).checkpoint_tmpl,
-                                    fired=self.cfg.attrs['fired'])
+            fired = self.cfg.attrs['fired']
+            if fired is None:
+                saver = None
+            else:
+                saver = CheckpointSaver(self.net, self.cfg.attrs['savedir'],
+                                        checkpoint_tmpl=tmpl, fired=fired)
             self.__checkpointsavers['train'] = saver
         return saver
 
@@ -758,10 +818,10 @@ class BasicTrainer:
         """
         Callback before ``run`` and after ``__init__``. Default to:
 
-            - initializing checkpoing and statistics savers (``init_monitors``)
+            - initializing checkpoing and statistics savers (``init_dirs``)
             - loading the checkpoint (``prepare_net``)
         """
-        self.init_monitors()
+        self.init_dirs()
         self.prepare_net()
 
     def teardown(self, error: typing.Optional[Exception]):
@@ -813,8 +873,7 @@ class BasicTrainer:
                             assert isinstance(stats, tuple), str(type(stats))
                             self.__log_stats(epoch, stage, batch,
                                              logger, stats)
-                            checkpointsaver = self.__get_checkpointsaver()
-                            checkpointsaver((epoch, batch))
+                            self.__dump_checkpoint(epoch, batch, logger)
                             self.__after_batch(stage)
                         self.__after_stage(stage)
                     else:
@@ -894,16 +953,25 @@ class BasicTrainer:
         stats_to_log = self.__organize_stats(stage, stats)
         if stats_to_log:
             statsaver = self.__get_statsaver(stage)
-            statsaver((epoch, batch), **stats_to_log)
-            stats_to_log_repr = self.__repr_stats(
-                stats_to_log)
-            logger.info('epoch%d/%s batch%d: %s', epoch, stage, batch,
-                        stats_to_log_repr)
+            if statsaver is None:
+                logger.debug('epoch%d/%s batch%d: StatSaver has been disabled',
+                             epoch, stage, batch)
+            else:
+                statsaver((epoch, batch), **stats_to_log)
+                stats_to_log_repr = self.__repr_stats(stats_to_log)
+                logger.info('epoch%d/%s batch%d: %s', epoch, stage, batch,
+                            stats_to_log_repr)
         else:
             logger.info('epoch%d/%s batch%d', epoch, stage, batch)
 
+    def __dump_checkpoint(self, epoch: int, batch: int,
+                          logger: logging.Logger):
+        checkpointsaver = self.__get_checkpointsaver()
+        if checkpointsaver is None:
+            logger.debug('CheckpointSaver has been disabled')
+        else:
+            checkpointsaver((epoch, batch))
 
-# TODO: BasicEvaluator
 
 class FreezingTrainer(BasicTrainer):
     """
@@ -967,7 +1035,7 @@ class FreezingTrainer(BasicTrainer):
         """
         Callback before ``run`` and after ``__init__``. Default to:
 
-            - initializing checkpoing and statistics savers (``init_monitors``)
+            - initializing checkpoing and statistics savers (``init_dirs``)
             - loading the checkpoint (``prepare_net``)
             - freeze the network if necessary (``freeze_net``)
         """
@@ -982,154 +1050,37 @@ class FreezingTrainer(BasicTrainer):
 class BasicEvaluator(BasicTrainer):
     """
     Abstract base evaluator adapting the framework by ``BasicTrainer`` such
-    that it's dedicated to evaluating an existing network checkpoint.
-    Please note the difference of the following convention with that of
-    ``BasicTrainer``.
-
-    +-----+--------------------+----------------------------------------------+
-    | Man |      Function      |                 Description                  |
-    +=====+====================+==============================================+
-    | T   | STAGE_once         | Minibatch in loop STAGE                      |
-    | T   | get_STAGEloader    | Dataloader of (inputs,targets) in loop STAGE |
-    | F   | before_batch_STAGE | Launched before STAGE_once                   |
-    | F   | after_batch_STAGE  | Launched after STAGE_once                    |
-    +-----+--------------------+----------------------------------------------+
-
-    where "Man" denotes "Mandatory". This table shows the signature. For
-    example, if a function has signature ``(x, y) -> z``, then it accepts two
-    positional arguments ``x`` and ``y``, and returns ``z``.
-
-    +--------------------+-----------------------------------+
-    |      Function      |             Signature             |
-    +====================+===================================+
-    | STAGE_once         | (inputs, targets) -> stats        |
-    | get_STAGEloader    | () -> Iterator[(inputs, targets)] |
-    | before_batch_STAGE | () -> None                        |
-    | after_batch_STAGE  | () -> None                        |
-    +--------------------+-----------------------------------+
-
-    Instance variables need to be specified before ``init_monitors`` is
-    called (by default ``init_monitors`` is called within ``setup``, which in
-    turn is called at the beginning of ``run``):
-
-    +----------------+----------------------+------------------------------+
-    |    Variable    |       Default        |         Description          |
-    +================+======================+==============================+
-    | eval_basedir   | $basedir/eval_epEP   | Directory to hold evaluation |
-    |                |                      | statistics, where EP denotes |
-    |                |                      | the first element of the     |
-    |                |                      | ``progress`` tuple specified |
-    |                |                      | at ``__init__``. If this     |
-    |                |                      | attribute is to set manually |
-    |                |                      | it must be prefixed          |
-    |                |                      | "$basedir"                   |
-    | savedir        | $basedir/save        | Directory to hold            |
-    |                |                      | checkpoints produced in      |
-    |                |                      | previous loop train          |
-    | statdir_STAGE  | $basedir             | Directory to hold statistics |
-    |                | /stat_$STAGE         | produced in loop STAGE other |
-    |                |                      | than train                   |
-    | fired_STAGE    | fired_always         | The firing policy of         |
-    |                |                      | StatSaver in loop STAGE      |
-    |                |                      | other than train             |
-    | ignore_existing_eval_basedir | False  | If ``False``, and if         |
-    |                |                      | ``eval_basedir`` already     |
-    |                |                      | exists, error will be raised |
-    |                |                      | to prevent overwriting       |
-    |                |                      | possible existing results    |
-    +----------------+----------------------+------------------------------+
-
-    where ``basedir``, the ``basedir`` directory when previously training,
-    must be provided at ``__init__``.
-
-    Mandatory instance variables need to be specified before ``run``:
-
-    +------------+------------------------------------------------+
-    |  Variable  |                  Description                   |
-    +============+================================================+
-    | run_stages | The loops to run in each epoch; 'train' must   |
-    |            | not be specified as one of them                |
-    | stat_names | The names of statistics returned by STAGE_once |
-    +------------+------------------------------------------------+
+    that it's dedicated to evaluating an existing network checkpoint. It makes
+    several tricky part of the original framework easier to use when applying
+    to evaluation that goes over the dataset *once*.
     """
 
     def __init__(self, net: nn.Module, progress: _EBProgress,
-                 basedir: str, device: str = 'cpu'):
+                 basedir: str, device: str = 'cpu',
+                 configname: str = 'trainer.ini'):
         """
         :param net: the network to evaluate
         :param progress: which to evaluate, must be of form (EPOCH, BATCH)
         :param basedir: the ``basedir`` of the original trainer
         :param device: where to evaluate
+        :param configname: the ini file basename used to configure the
+               original trainer
         """
-        super().__init__(net, progress[0] + 2, device=device,
-                         progress=progress)
+        super().__init__(net, max_epoch=progress[0] + 2, device=device,
+                         progress=progress, configname=configname)
         if not os.path.isdir(basedir):
             raise FileNotFoundError('basedir "{}" not found'.format(basedir))
         self.basedir = basedir
 
-    def remove_these_vars(self, variables: typing.Iterable[str]) -> None:
-        """
-        Helper method to remove unnecessary instance variables brought
-        from the trainer. ``AttributeError`` won't be triggered for
-        non-existent variable names in ``variables``.
-
-        :param variables: a list of instance variable names to remove
-        """
-        for var in variables:
-            with contextlib.suppress(AttributeError):
-                delattr(self, var)
-
-    @property
-    def default_basedir(self):
-        raise AttributeError('No default basedir available')
-
-    @property
-    def default_eval_basedir(self):
-        return 'eval_ep{}'.format(self.progress[0])
-
-    def init_monitors(self):
-        # eval_basedir
-        ignore_existing_eval_basedir = \
-            getattr(self, 'ignore_existing_eval_basedir', False)
-        if not hasattr(self, 'eval_basedir'):
-            setattr(self, 'eval_basedir', os.path.join(
-                self.basedir, self.default_eval_basedir))
-            if os.path.exists(getattr(self, 'eval_basedir')) \
-                    and not ignore_existing_eval_basedir:
-                raise FileExistsError('Default eval_basedir "{}" already '
-                                      'exists; try setting a different name'
-                                      .format(getattr(self, 'eval_basedir')))
-        elif not os.path.samefile(os.path.commonprefix((
-                getattr(self, 'eval_basedir'), self.basedir)), self.basedir):
-            raise ValueError('Expecting eval_basedir to be a child of '
-                             'self.basedir "{}", but got "{}"'
-                             .format(getattr(self, 'eval_basedir'),
-                                     self.basedir))
-        elif os.path.exists(getattr(self, 'eval_basedir')) \
-                and not ignore_existing_eval_basedir:
-            raise FileExistsError('eval_basedir "{}" already exists; '
-                                  'try setting a different name'
-                                  .format(getattr(self, 'eval_basedir')))
-
-        # savedir
-        if not hasattr(self, 'savedir'):
-            setattr(self, 'savedir', os.path.join(
-                getattr(self, 'basedir'), 'save'))
-
-        # run_stages and others
-        for stage in self.run_stages:
-            if stage == 'train':
-                raise ValueError('Expecting no \'train\' in `self.run_stages`'
-                                 ', but got {}'.format(self.run_stages))
-            if not hasattr(self, 'statdir_{}'.format(stage)):
-                setattr(self, 'statdir_{}'.format(stage),
-                        os.path.join(getattr(self, 'eval_basedir'),
-                                     'stat_{}'.format(stage)))
-            if not hasattr(self, 'fired_{}'.format(stage)):
-                setattr(self, 'fired_{}'.format(stage), fired_always)
+    def parse_config(self, ini: configparser.ConfigParser) -> TrainerConfig:
+        cfg = super().parse_config(ini)
+        if 'train' in cfg.attrs['run_stages']:
+            raise ValueError('"train" should not exist in __root__/run_stages'
+                             ' ({})'.format(cfg.attrs['run_stages']))
+        return cfg
 
     def prepare_net(self, ext_savedir: str = None) -> None:
-        savedir = ext_savedir if ext_savedir else getattr(self, 'savedir')
+        savedir = ext_savedir or self.cfg.attrs['savedir']
         load_checkpoint(self.net, savedir, type(self).checkpoint_tmpl,
                         self.progress, map_location=self.device)
         self.net.to(self.device)
