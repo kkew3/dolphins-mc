@@ -223,29 +223,32 @@ def broadcast_value2list(value: T1, iterable: typing.Iterable[T2]) \
     return map(lambda x: (value, x), iterable)
 
 
-def loggername(module_name, *args):
+def loggername(module_name: str, self_or_function_name: typing.Any,
+               method_name: typing.Optional[str] = None) -> str:
     """
-    Get hierarchical logger name.
+    Returns logger name. Usage::
 
-    Usage::
-
-        .. code-block:: python
+        .. code-block::
 
             loggername(__name__)
             loggername(__name__, self)
             loggername(__name__, 'function_name')
             loggername(__name__, self, 'method_name')
+
+    :param module_name: as returned by ``__name__``
+    :param self_or_function_name: either the function name (str) or the
+           ``self`` object of the method to log
+    :param method_name: if not ``None``, the name of the method to log
+    :return: the logger **name**
     """
     tokens = [module_name]
-    if len(args) > 0:
-        if isinstance(args[0], str):
-            tokens.append(args[0])
-        else:
-            tokens.append(type(args[0]).__name__)
-    if len(args) > 1:
-        tokens.append(args[1])
+    if isinstance(self_or_function_name, str):
+        tokens.append(self_or_function_name)
+    else:
+        tokens.append(type(self_or_function_name).__name__)
+    if method_name:
+        tokens.append(method_name)
     return '.'.join(tokens)
-
 
 def jacobian(outputs: torch.Tensor, inputs: torch.Tensor,
              to_device: str = None) -> torch.Tensor:
